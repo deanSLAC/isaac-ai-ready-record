@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ISAAC AI-Ready Scientific Record",
+  "type": "object",
+  "required": [
+    "isaac_record_version",
+    "record_id",
+    "record_type",
+    "timestamps",
+    "sample",
+    "measurement",
+    "descriptors"
+  ],
+  "properties": {
+    "isaac_record_version": { "type": "string" },
+    "record_id": { "type": "string" },
+    "record_type": { "type": "string" },
+    "timestamps": { "type": "object" },
+    "acquisition_source": { "type": "object" },
+    "sample": { "type": "object" },
+    "context": { "type": "object" },
+    "measurement": { "type": "object" },
+    "descriptors": { "type": "object" },
+    "links": { "type": "array" }
+  }
+}

@@ -1,0 +1,104 @@
+{
+  "isaac_record_version": "1.0",
+  "record_id": "01JFH3Q8Z1Q9F0XG3V7N4K2M8C",
+  "record_type": "evidence",
+
+  "timestamps": {
+    "acquired_start_utc": "2025-12-10T18:30:00Z",
+    "acquired_end_utc": "2025-12-10T18:45:00Z",
+    "created_utc": "2025-12-14T20:15:00Z"
+  },
+
+  "acquisition_source": {
+    "source_type": "facility",
+    "facility": {
+      "site": "SSRL",
+      "beamline": "15-2",
+      "endstation": "XES"
+    }
+  },
+
+  "sample": {
+    "material": {
+      "formula": "CuO2",
+      "vendor": "Sigma-Aldrich"
+    },
+    "sample_form": "pellet",
+    "composition": {
+      "CuO2_mass_fraction": 0.001,
+      "sucrose_mass_fraction": 0.999
+    },
+    "geometry": {
+      "pellet_diameter_mm": 7.0
+    }
+  },
+
+  "context": {
+    "environment": "ex_situ",
+    "atmosphere": "air",
+    "ambient_exposure": true,
+    "temperature_K": 298
+  },
+
+  "measurement": {
+    "family": "xray",
+    "technique": "xray_absorption",
+    "measurement_type": "xanes",
+    "variant": "herfd",
+    "detection_mode": "XES",
+
+    "edge": {
+      "element": "Cu",
+      "shell": "K"
+    },
+
+    "config": {
+      "monochromator": { "crystal": "Si(311)" },
+      "beam": { "spot_um_fwhm": [100.0, 800.0] },
+      "geometry": { "incident_angle_deg": 45.0, "emission_angle_deg": 45.0 },
+      "instrument_energy_resolution_eV": 0.8,
+      "energy_calibration": {
+        "reference": "Cu_foil",
+        "feature": "inflection_point",
+        "reference_energy_eV": 8998.5
+      }
+    },
+
+    "series": {
+      "n_scans_acquired": 6,
+      "n_scans_used": 6,
+      "positioning": { "mode": "multi_spot", "n_spots": 3 },
+      "qc": {
+        "sample_evolution_observed": false,
+        "excluded_scans": []
+      }
+    },
+
+    "payload": {
+      "x": { "name": "incident_energy", "unit": "eV", "values": [] },
+      "y": { "name": "signal", "unit": "arb", "values": [] },
+      "processing": { "type": "averaged_normalized_spectrum" }
+    }
+  },
+
+  "descriptors": {
+    "policy": { "requires_at_least_one": true },
+    "outputs": [
+      {
+        "label": "manual_review_2025-12-14",
+        "generated_utc": "2025-12-14T20:20:00Z",
+        "descriptors": [
+          {
+            "name": "xanes_inflection_point_energy",
+            "kind": "absolute",
+            "source": "manual",
+            "value": 9001.2,
+            "unit": "eV",
+            "definition": "Inflection point of the averaged HERFD-XANES spectrum determined from first-derivative maximum after Cu-foil calibration.",
+            "precision": { "sigma": 0.01, "unit": "eV" }
+          }
+        ]
+      }
+    ]
+  }
+}

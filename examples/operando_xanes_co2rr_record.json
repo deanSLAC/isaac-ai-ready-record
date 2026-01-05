@@ -138,22 +138,22 @@
     ],
     "links": [
         {
-            "rel": "replica_of",
-            "target": "01JFH7M0Q2B8K1J6N9S4Y3D7A1",
-            "basis": "replicate_preparation",
-            "notes": "Detailed electrochemical characterization on nominally identical electrode."
-        },
-        {
-            "rel": "intended_comparison_target",
-            "target": "01JFH7K0N8R9S2C3V6T1M0Q4P7",
-            "basis": "shared_reference_state",
-            "notes": "Baseline operando spectrum at different potential used for differential descriptors."
+            "rel": "same_sample_as",
+            "target": "01JFH5Z0A3S9H2ZI5X9P6M4O0E",
+            "basis": "shared_material_batch",
+            "notes": "Performance testing on identical GDE batch."
         },
         {
             "rel": "intended_comparison_target",
             "target": "01JFH3Q8Z1Q9F0XG3V7N4K2M8C",
+            "basis": "shared_reference_state",
+            "notes": "Ex-situ CuO2 standard used for calibration."
+        },
+        {
+            "rel": "intended_comparison_target",
+            "target": "01JFH8SIMXAS00000000000001",
             "basis": "same_absorber_edge",
-            "notes": "Ex-situ CuO2 standard reference used for classification and calibration checks."
+            "notes": "Comparison to simulated Cu K-edge reference."
         }
     ],
     "descriptors": {

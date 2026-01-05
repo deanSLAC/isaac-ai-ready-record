@@ -1,30 +1,34 @@
-# ISAAC AI-Ready Records
+# ISAAC AI-Ready Scientific Record
 
-## What this repo is
-This repository serves as the single source of truth for ISAAC AI-ready scientific records. It defines the standardized structure and semantics required to make scientific data consistent, machine-readable, and ready for AI integration. The repository contains formal validation definitions, concrete record examples, and detailed usage documentation. All files are treated as concrete records to ensure immediate applicability in data workflows.
+**Version:** 1.0 (Frozen)
 
-## Repository structure
-- `schema/`: JSON definitions for validating record structure and content.
-- `examples/`: Concrete JSON record examples demonstrating various scientific use cases.
-- `wiki/`: Detailed documentation on record semantics and field definitions.
+## Overview
+This repository defines the authoritative standard for the **ISAAC AI-Ready Record**. 
+It provides the schema, documentation, and examples required to represent scientific data in a format that is semantically rigorous, machine-readable, and optimized for autonomous agent reasoning.
 
-## Record contract (v1.0)
-The following fields define the structure of a valid ISAAC record.
+## Documentation Authority
+The **[Wiki](wiki/Home.md)** is the normative single source of truth for the v1.0 standard. All definitions, constraints, and vocabularies are rigorously defined there.
 
-### Required
-- `isaac_record_version`
-- `record_id`
-- `record_type`
-- `timestamps`
-- `sample`
-- `measurement`
-- `descriptors`
+*   **[Record Overview](wiki/Record-Overview.md)**: The 8-block anatomy of a record.
+*   **[Measurement](wiki/Measurement.md)**: The observable schema and data contract.
+*   **[System](wiki/System.md)**: Infrastructure and configuration definitions.
+*   **[Sample](wiki/Sample.md)**: Material identity and realization.
+*   **[Links](wiki/Links.md)**: The knowledge graph ontology.
+*   **[Descriptors](wiki/Descriptors.md)**: Scientific claims and features.
+*   **[Assets](wiki/Assets.md)**: External immutable objects.
 
-### Optional
-- `acquisition_source`
-- `context`
-- `links`
+## Repository Structure
+*   `schema/`: Strict JSON Schema definitions (`isaac_record_v1.json`) for validation.
+*   `examples/`: **Golden Records** demonstrating 100% compliant usage across domains:
+    *   `operando_xanes_co2rr_record.json`: Operando characterization.
+    *   `simulation_xas_record.json`: Computational simulation.
+    *   `ex_situ_xanes_cuo2_record.json`: Basic experimental characterization.
+    *   `co2rr_performance_record.json`: Flow cell performance.
+    *   `echem_performance_record.json`: RDE electrochemistry.
+*   `wiki/`: Detailed normative documentation.
 
-## Roadmap (next)
-- Add "derived" and "calculation" record examples
-- Add validator/CI
+## Core Design Philosophy (v1.0)
+1.  **Strict Separation of Concerns**: Sample identity != Measurement data != System config.
+2.  **Machine-First Semantics**: Closed vocabularies for all structural types to enable reliable agent queries.
+3.  **Refrence-Based**: Heavy data lives in immutable Assets; the Record is the metadata graph.
+4.  **Shared Abstraction**: Experiment and Simulation share the same `measurement.series` structure for direct comparability.

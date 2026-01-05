@@ -45,71 +45,59 @@
             "name": "HClO4",
             "concentration_M": 0.1
         },
-        "temperature_C": 25.0,
+        "temperature_K": 298.15,
         "gas_feed": "O2",
         "cell_type": "three-electrode glass cell",
         "rotation_speed_rpm": 1600
     },
+    "system": {
+        "domain": "experimental",
+        "facility": {
+            "facility_name": "SSRL",
+            "organization": "SLAC",
+            "laboratory": "Echem_Lab"
+        },
+        "instrument": {
+            "instrument_type": "potentiostat",
+            "instrument_name": "BioLogic_VMP3",
+            "vendor_or_project": "BioLogic"
+        },
+        "configuration": {
+            "channel_id": "1",
+            "booster_amps": 0,
+            "electrode_configuration": "RDE_AFE",
+            "reference_electrode": "RHE_hydroflex"
+        }
+    },
     "measurement": {
-        "family": "electrochem",
-        "technique": "linear_sweep_voltammetry",
-        "payload": {
-            "x": {
-                "name": "current_density",
-                "unit": "mA/cm2",
-                "values": [
-                    0.1,
-                    0.2,
-                    0.5,
-                    1.0,
-                    2.0,
-                    5.0,
-                    10.0,
-                    20.0,
-                    50.0,
-                    100.0,
-                    200.0,
-                    300.0,
-                    400.0,
-                    500.0,
-                    600.0,
-                    700.0,
-                    800.0,
-                    900.0,
-                    1000.0,
-                    1200.0
-                ]
-            },
-            "y": {
-                "name": "potential_vs_RHE",
-                "unit": "V",
-                "values": [
-                    0.95,
-                    0.92,
-                    0.89,
-                    0.87,
-                    0.85,
-                    0.82,
-                    0.79,
-                    0.76,
-                    0.72,
-                    0.68,
-                    0.62,
-                    0.58,
-                    0.54,
-                    0.50,
-                    0.46,
-                    0.42,
-                    0.38,
-                    0.34,
-                    0.30,
-                    0.22
-                ]
-            },
-            "processing": {
-                "type": "iR-corrected, averaged steady-state points",
-                "notes": "100% iR-corrected. Points extracted from steady-state hold steps (30s each). Downsampled for visualization."
+        "processing": {
+            "type": "iR_corrected_averaged_steady_state",
+            "recipe_link": {
+                "rel": "processing_recipe",
+                "target": "workflow://echem_orr_processing/v1.2"
             }
+        },
+        "series": [
+            {
+                "series_id": "lsv_trace",
+                "independent_variables": [
+                    {
+                        "name": "potential",
+                        "unit": "V_RHE"
+                    }
+                ],
+                "channels": [
+                    {
+                        "name": "current_density",
+                        "unit": "mA_cm2",
+                        "role": "measured_response"
+                    }
+                ]
+            }
+        ],
+        "qc": {
+            "status": "valid",
+            "evidence": "Clean mass transport limited region observed."
         }
     },
     "assets": [
@@ -118,7 +106,7 @@
             "content_role": "raw_data_pointer",
             "uri": "lab-storage://echem/2025/dec/15/Dev-005_ORR_run.mpr",
             "media_type": "application/octet-stream",
-            "sha256": "TBD",
+            "sha256": "i3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b123",
             "notes": "Binary BioLogic instrument file."
         },
         {
@@ -126,7 +114,7 @@
             "content_role": "reduction_product",
             "uri": "lab-storage://echem/2025/dec/15/Dev-005_ORR_reduced.csv",
             "media_type": "text/csv",
-            "sha256": "TBD",
+            "sha256": "j3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b234",
             "notes": "Full resolution steady-state polarization table."
         },
         {
@@ -134,10 +122,11 @@
             "content_role": "processing_recipe",
             "uri": "workflow://echem_orr_processing/v1.2",
             "media_type": "text/x-python",
-            "sha256": "TBD",
+            "sha256": "k3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b345",
             "notes": "Python script for iR correction and steady-state averaging."
         }
     ],
+    "links": [],
     "descriptors": {
         "policy": {
             "requires_at_least_one": true
@@ -153,6 +142,8 @@
                 "descriptors": [
                     {
                         "name": "tafel_slope",
+                        "kind": "absolute",
+                        "source": "auto",
                         "value": 62.0,
                         "unit": "mV/dec",
                         "uncertainty": {
@@ -163,6 +154,8 @@
                     },
                     {
                         "name": "mass_activity_0_9V",
+                        "kind": "absolute",
+                        "source": "auto",
                         "value": 0.12,
                         "unit": "A/mg_Pt",
                         "uncertainty": {

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "ISAAC AI-Ready Scientific Record",
+  "title": "ISAAC AI-Ready Scientific Record v1.0",
   "type": "object",
-  "additionalProperties": true,
+  "additionalProperties": false,
   "required": [
     "isaac_record_version",
     "record_id",
@@ -13,35 +13,59 @@
   ],
   "properties": {
     "isaac_record_version": {
-      "type": "string"
+      "type": "string",
+      "const": "1.0"
     },
     "record_id": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^[0-9A-Z]{26}$",
+      "description": "ULID identifier for the record."
     },
     "record_type": {
-      "type": "string"
+      "type": "string",
+      "enum": [
+        "evidence",
+        "intent",
+        "synthesis"
+      ],
+      "description": "Fundamental nature of the record."
     },
     "record_domain": {
       "type": "string",
       "enum": [
         "characterization",
         "performance",
-        "theory",
         "simulation",
+        "theory",
         "derived"
       ],
-      "description": "The fundamental category of scientific knowledge represented by the record."
+      "description": "Scientific domain of the record content."
     },
     "timestamps": {
       "type": "object",
-      "minProperties": 1
+      "required": [
+        "created_utc"
+      ],
+      "properties": {
+        "created_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "acquired_start_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "acquired_end_utc": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
     },
     "acquisition_source": {
       "type": "object",
       "required": [
         "source_type"
       ],
-      "additionalProperties": true,
       "properties": {
         "source_type": {
           "type": "string",
@@ -50,26 +74,337 @@
             "laboratory",
             "computation",
             "literature",
-            "database",
-            "industrial"
-          ],
-          "description": "Origin of the information. 'computation' refers to internally generated computational results. Literature is treated as a source, not a distinct record category."
+            "database"
+          ]
+        },
+        "facility": {
+          "type": "object"
+        },
+        "laboratory": {
+          "type": "object"
+        },
+        "computation": {
+          "type": "object"
+        },
+        "literature": {
+          "type": "object"
         }
       }
     },
     "sample": {
-      "type": "object"
-    },
-    "device": {
-      "type": "object"
+      "type": "object",
+      "required": [
+        "material",
+        "sample_form"
+      ],
+      "properties": {
+        "material": {
+          "type": "object",
+          "required": [
+            "name",
+            "formula"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "formula": {
+              "type": "string"
+            },
+            "provenance": {
+              "type": "string"
+            }
+          }
+        },
+        "sample_form": {
+          "type": "string"
+        },
+        "composition": {
+          "type": "object"
+        },
+        "geometry": {
+          "type": "object"
+        }
+      }
     },
     "system": {
-      "type": "object"
+      "type": "object",
+      "required": [
+        "domain",
+        "configuration"
+      ],
+      "properties": {
+        "domain": {
+          "type": "string",
+          "enum": [
+            "experimental",
+            "computational"
+          ]
+        },
+        "facility": {
+          "type": "object"
+        },
+        "instrument": {
+          "type": "object"
+        },
+        "configuration": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "description": "Flat object of categorical settings. No nested objects allowed."
+        }
+      }
     },
     "context": {
-      "type": "object"
+      "type": "object",
+      "required": [
+        "environment",
+        "temperature_K"
+      ],
+      "properties": {
+        "environment": {
+          "type": "string"
+        },
+        "temperature_K": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": true
     },
     "measurement": {
+      "type": "object",
+      "required": [
+        "series",
+        "qc"
+      ],
+      "properties": {
+        "processing": {
+          "type": "object"
+        },
+        "series": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "series_id",
+              "independent_variables",
+              "channels"
+            ],
+            "properties": {
+              "series_id": {
+                "type": "string"
+              },
+              "independent_variables": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "unit"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "unit": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "channels": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "unit",
+                    "role"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "primary_signal",
+                        "measured_response",
+                        "simulated_observable",
+                        "derived_signal",
+                        "auxiliary_signal",
+                        "control_readback",
+                        "quality_monitor"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "qc": {
+          "type": "object",
+          "required": [
+            "status"
+          ]
+        }
+      }
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "rel",
+          "target"
+        ],
+        "properties": {
+          "rel": {
+            "type": "string",
+            "enum": [
+              "derived_from",
+              "intended_comparison_target",
+              "calibration_of",
+              "same_sample_as",
+              "replica_of",
+              "follows",
+              "validates",
+              "invalidates"
+            ]
+          },
+          "target": {
+            "type": "string",
+            "pattern": "^[0-9A-Z]{26}$"
+          },
+          "basis": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "asset_id",
+          "content_role",
+          "uri",
+          "sha256"
+        ],
+        "properties": {
+          "asset_id": {
+            "type": "string"
+          },
+          "content_role": {
+            "type": "string",
+            "enum": [
+              "raw_data_pointer",
+              "reduction_product",
+              "processing_recipe",
+              "input_structure",
+              "metadata_snapshot",
+              "supplementary_image",
+              "other"
+            ]
+          },
+          "uri": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "descriptors": {
+      "type": "object",
+      "required": [
+        "outputs"
+      ],
+      "properties": {
+        "policy": {
+          "type": "object"
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "label",
+              "generated_utc",
+              "generated_by",
+              "descriptors"
+            ],
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "generated_utc": {
+                "type": "string"
+              },
+              "generated_by": {
+                "type": "object"
+              },
+              "descriptors": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "kind",
+                    "source",
+                    "value",
+                    "uncertainty"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "absolute",
+                        "differential",
+                        "categorical",
+                        "similarity",
+                        "model"
+                      ]
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "value": {},
+                    "unit": {
+                      "type": "string"
+                    },
+                    "uncertainty": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "device": {
       "type": "object"
     },
     "computation": {
@@ -77,54 +412,6 @@
     },
     "literature": {
       "type": "object"
-    },
-    "descriptors": {
-      "type": "object"
-    },
-    "links": {
-      "type": "array"
     }
-  },
-  "allOf": [
-    {
-      "description": "Entity constraint: at least one of sample, device, system must be present.",
-      "anyOf": [
-        {
-          "required": [
-            "sample"
-          ]
-        },
-        {
-          "required": [
-            "device"
-          ]
-        },
-        {
-          "required": [
-            "system"
-          ]
-        }
-      ]
-    },
-    {
-      "description": "Content constraint: at least one of measurement, computation, literature must be present.",
-      "anyOf": [
-        {
-          "required": [
-            "measurement"
-          ]
-        },
-        {
-          "required": [
-            "computation"
-          ]
-        },
-        {
-          "required": [
-            "literature"
-          ]
-        }
-      ]
-    }
-  ]
+  }
 }

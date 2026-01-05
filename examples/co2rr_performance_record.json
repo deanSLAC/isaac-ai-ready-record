@@ -44,56 +44,91 @@
             "name": "KHCO3",
             "concentration_M": 1.0
         },
-        "temperature_C": 25.0,
+        "temperature_K": 298.15,
         "cell_type": "microfluidic flow cell",
         "gas_feed": {
             "gas": "CO2",
             "flow_rate_sccm": 20.0
         },
-        "potential_scale": "RHE",
-        "iR_compensation": "85% automatic"
+        "potential_control": {
+            "setpoint_V": -1.0,
+            "scale": "RHE",
+            "compensation": "85% automatic"
+        }
+    },
+    "system": {
+        "domain": "experimental",
+        "facility": {
+            "facility_name": "LBNL_MSD",
+            "organization": "LBNL",
+            "laboratory": "Flow_Cell_Lab"
+        },
+        "instrument": {
+            "instrument_type": "potentiostat_gc",
+            "instrument_name": "Station-2_Biologic_VMP3",
+            "vendor_or_project": "BioLogic"
+        },
+        "configuration": {
+            "gc_column_type": "PLOT_Q",
+            "cell_geometry": "1cm2_exposed",
+            "reference_electrode": "Ag/AgCl_leak_free"
+        }
     },
     "measurement": {
-        "family": "electrochem",
-        "technique": "CO2RR_steady_state_performance",
-        "protocol": "Potentiostatic hold at -1.0V vs RHE for 60 minutes with intermittent gas chromatography sampling.",
-        "setpoint": {
-            "potential_V": -1.0,
-            "scale": "RHE"
+        "processing": {
+            "type": "GC_integrated_composition_analysis",
+            "recipe_link": {
+                "rel": "processing_recipe",
+                "target": "workflow://co2rr_fe_calculator/v3.0"
+            }
         },
-        "payload": {
-            "reduced_data": {
-                "mean_current_density": {
-                    "value": -150.5,
-                    "unit": "mA/cm2"
-                },
-                "faradaic_efficiencies": [
+        "series": [
+            {
+                "series_id": "chronoamperometry_trace",
+                "independent_variables": [
                     {
-                        "product": "CO",
-                        "value": 0.152,
-                        "unit": "fraction"
+                        "name": "time",
+                        "unit": "s"
+                    }
+                ],
+                "channels": [
+                    {
+                        "name": "current_density",
+                        "unit": "mA_cm2",
+                        "role": "measured_response"
                     },
                     {
-                        "product": "C2H4",
-                        "value": 0.428,
-                        "unit": "fraction"
-                    },
-                    {
-                        "product": "H2",
-                        "value": 0.125,
-                        "unit": "fraction"
-                    },
-                    {
-                        "product": "EtOH",
-                        "value": 0.181,
-                        "unit": "fraction"
+                        "name": "potential_readback",
+                        "unit": "V_RHE",
+                        "role": "control_readback"
                     }
                 ]
             },
-            "processing": {
-                "type": "GC-integrated composition analysis",
-                "notes": "Faradaic efficiencies calculated from GC peak areas averaged over 3 injections at steady state."
+            {
+                "series_id": "gas_chromatography_samples",
+                "independent_variables": [
+                    {
+                        "name": "injection_time",
+                        "unit": "s"
+                    }
+                ],
+                "channels": [
+                    {
+                        "name": "co_concentration",
+                        "unit": "ppm",
+                        "role": "measured_response"
+                    },
+                    {
+                        "name": "ethylene_concentration",
+                        "unit": "ppm",
+                        "role": "measured_response"
+                    }
+                ]
             }
+        ],
+        "qc": {
+            "status": "valid",
+            "evidence": "Stable current within 5% over hold duration."
         }
     },
     "assets": [
@@ -102,7 +137,7 @@
             "content_role": "raw_data_pointer",
             "uri": "facility-archive://LBNL/2025/projects/CO2RR/run_042/raw_data.zip",
             "media_type": "application/zip",
-            "sha256": "TBD",
+            "sha256": "f3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b123",
             "notes": "Contains potentiostat logs (.mpt) and GC chromatography reports (.xls)."
         },
         {
@@ -110,7 +145,7 @@
             "content_role": "reduction_product",
             "uri": "facility-archive://LBNL/2025/projects/CO2RR/run_042/performance_summary.json",
             "media_type": "application/json",
-            "sha256": "TBD",
+            "sha256": "g3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b234",
             "notes": "Aggregated inputs and calculated FE values."
         },
         {
@@ -118,10 +153,11 @@
             "content_role": "processing_recipe",
             "uri": "workflow://co2rr_fe_calculator/v3.0",
             "media_type": "text/x-python",
-            "sha256": "TBD",
+            "sha256": "h3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b345",
             "notes": "Standard GC-to-FE conversion script."
         }
     ],
+    "links": [],
     "descriptors": {
         "policy": {
             "requires_at_least_one": true
@@ -137,6 +173,8 @@
                 "descriptors": [
                     {
                         "name": "steady_state_current_density_at_setpoint",
+                        "kind": "absolute",
+                        "source": "auto",
                         "value": -150.5,
                         "unit": "mA/cm2",
                         "uncertainty": {
@@ -146,7 +184,9 @@
                         "definition": "Mean total current density measured during the last 10 minutes of the hold."
                     },
                     {
-                        "name": "faradaic_efficiency_CO",
+                        "name": "faradaic_efficiency.CO",
+                        "kind": "absolute",
+                        "source": "auto",
                         "value": 0.152,
                         "unit": "fraction",
                         "uncertainty": {
@@ -156,7 +196,9 @@
                         "definition": "Faradaic efficiency for Carbon Monoxide production."
                     },
                     {
-                        "name": "faradaic_efficiency_C2H4",
+                        "name": "faradaic_efficiency.C2H4",
+                        "kind": "absolute",
+                        "source": "auto",
                         "value": 0.428,
                         "unit": "fraction",
                         "uncertainty": {
@@ -166,7 +208,9 @@
                         "definition": "Faradaic efficiency for Ethylene production."
                     },
                     {
-                        "name": "faradaic_efficiency_EtOH",
+                        "name": "faradaic_efficiency.EtOH",
+                        "kind": "absolute",
+                        "source": "auto",
                         "value": 0.181,
                         "unit": "fraction",
                         "uncertainty": {

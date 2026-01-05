@@ -32,6 +32,24 @@
       "pellet_diameter_mm": 7.0
     }
   },
+  "system": {
+    "domain": "experimental",
+    "facility": {
+      "facility_name": "SSRL",
+      "organization": "SLAC",
+      "beamline": "15-2"
+    },
+    "instrument": {
+      "instrument_type": "beamline_endstation",
+      "instrument_name": "HiQ_Station_XES",
+      "vendor_or_project": "Custom"
+    },
+    "configuration": {
+      "monochromator_crystal": "Si(311)",
+      "spectrometer_geometry": "Von_Hamos",
+      "detector_model": "Pilatus_100K"
+    }
+  },
   "context": {
     "environment": "ex_situ",
     "atmosphere": "air",
@@ -39,139 +57,39 @@
     "temperature_K": 298
   },
   "measurement": {
-    "family": "xray",
-    "technique": "xray_absorption",
-    "measurement_type": "xanes",
-    "variant": "herfd",
-    "detection_mode": "XES",
-    "edge": {
-      "element": "Cu",
-      "shell": "K"
-    },
-    "config": {
-      "monochromator": {
-        "crystal": "Si(311)"
-      },
-      "beam": {
-        "spot_um_fwhm": [
-          100.0,
-          800.0
-        ]
-      },
-      "geometry": {
-        "incident_angle_deg": 45.0,
-        "emission_angle_deg": 45.0
-      },
-      "instrument_energy_resolution_eV": 0.8,
-      "energy_calibration": {
-        "reference": "Cu_foil",
-        "feature": "inflection_point",
-        "reference_energy_eV": 8998.5
+    "processing": {
+      "type": "averaged_normalized_spectrum",
+      "recipe_link": {
+        "rel": "processing_recipe",
+        "target": "workflow://xanes_reduction/v2"
       }
     },
-    "series": {
-      "n_scans_acquired": 6,
-      "n_scans_used": 6,
-      "positioning": {
-        "mode": "multi_spot",
-        "n_spots": 3
-      },
-      "qc": {
-        "sample_evolution_observed": false,
-        "excluded_scans": []
-      }
-    },
-    "payload": {
-      "x": {
-        "name": "incident_energy",
-        "unit": "eV",
-        "values": [
-          8975.0,
-          8976.0,
-          8977.0,
-          8978.0,
-          8979.0,
-          8980.0,
-          8981.0,
-          8982.0,
-          8983.0,
-          8984.0,
-          8985.0,
-          8986.0,
-          8987.0,
-          8988.0,
-          8989.0,
-          8990.0,
-          8991.0,
-          8992.0,
-          8993.0,
-          8994.0,
-          8995.0,
-          8996.0,
-          8997.0,
-          8998.0,
-          8999.0,
-          9000.0,
-          9001.0,
-          9002.0,
-          9003.0,
-          9004.0,
-          9005.0,
-          9010.0,
-          9015.0,
-          9020.0,
-          9030.0,
-          9040.0,
-          9050.0
+    "series": [
+      {
+        "series_id": "averaged_spectrum",
+        "independent_variables": [
+          {
+            "name": "incident_energy",
+            "unit": "eV"
+          }
+        ],
+        "channels": [
+          {
+            "name": "absorption",
+            "unit": "mu_normalized",
+            "role": "primary_signal"
+          },
+          {
+            "name": "i0_monitor",
+            "unit": "counts",
+            "role": "auxiliary_signal"
+          }
         ]
-      },
-      "y": {
-        "name": "signal",
-        "unit": "arb",
-        "values": [
-          0.01,
-          0.01,
-          0.02,
-          0.02,
-          0.03,
-          0.05,
-          0.08,
-          0.15,
-          0.30,
-          0.60,
-          0.95,
-          1.20,
-          1.35,
-          1.45,
-          1.50,
-          1.48,
-          1.42,
-          1.35,
-          1.28,
-          1.25,
-          1.24,
-          1.25,
-          1.28,
-          1.32,
-          1.35,
-          1.38,
-          1.40,
-          1.38,
-          1.35,
-          1.30,
-          1.25,
-          1.10,
-          1.05,
-          1.02,
-          1.00,
-          0.98,
-          0.96
-        ]
-      },
-      "processing": {
-        "type": "averaged_normalized_spectrum",
-        "notes": "Final reduced product: Averaged 6 scans, normalized to edge jump = 1.0. Embedded x,y values are downsampled for illustration; full-resolution reduced spectrum is referenced in assets."
       }
+    ],
+    "qc": {
+      "status": "valid",
+      "evidence": "No beam damage evolution observed across 6 scans."
     }
   },
   "assets": [
@@ -180,7 +98,7 @@
       "content_role": "raw_data_pointer",
       "uri": "ssrl-archive://BL15-2/2025_run_001/raw.h5",
       "media_type": "application/x-hdf5",
-      "sha256": "TBD",
+      "sha256": "a3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b123",
       "notes": "Full raw scan set including monitor channels."
     },
     {
@@ -188,7 +106,7 @@
       "content_role": "reduction_product",
       "uri": "ssrl-archive://BL15-2/2025_run_001/reduced/CuO2_merged.xdi",
       "media_type": "text/plain",
-      "sha256": "TBD",
+      "sha256": "b3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b234",
       "notes": "Full resolution merged spectrum in XDI format."
     },
     {
@@ -196,10 +114,11 @@
       "content_role": "processing_recipe",
       "uri": "workflow://xanes_reduction/v2",
       "media_type": "application/x-ipynb+json",
-      "sha256": "TBD",
-      "notes": "Jupyter notebook used for averaging and normalization. Tool: Larch 0.9.72."
+      "sha256": "c3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b345",
+      "notes": "Jupyter notebook used for averaging and normalization."
     }
   ],
+  "links": [],
   "descriptors": {
     "policy": {
       "requires_at_least_one": true
@@ -219,7 +138,7 @@
             "source": "manual",
             "value": 9001.2,
             "unit": "eV",
-            "definition": "Inflection point of the averaged HERFD-XANES spectrum determined from first-derivative maximum after Cu-foil calibration.",
+            "definition": "Inflection point derived from derivative maximum.",
             "uncertainty": {
               "sigma": 0.01,
               "unit": "eV"

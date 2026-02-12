@@ -19,7 +19,7 @@ if database.is_db_configured():
     database.init_tables()
 
 st.title("ISAAC AI-Ready Record Portal")
-st.markdown("### The Middleware for Scientific Semantics")
+st.markdown("### The Middleware for Scientific Semantics — v0.5.0")
 
 # Check database status
 db_connected = database.test_db_connection()

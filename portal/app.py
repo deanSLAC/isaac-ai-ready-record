@@ -249,7 +249,7 @@ if page == "Ontology Editor":
                  st.write(f"*{categories_dict[selected_category]['description']}*")
                  values = categories_dict[selected_category]['values']
                  df_vals = pd.DataFrame(values, columns=["Allowed Terms"])
-                 st.dataframe(df_vals, use_container_width=True, height=200)
+                 st.dataframe(df_vals, width='stretch', height=200)
 
             # Add Term
             col_in, col_btn = st.columns([3, 1])
@@ -571,7 +571,7 @@ elif page == "Saved Records":
                 # Display as table
                 df = pd.DataFrame(records)
                 df.columns = ["Record ID", "Type", "Domain", "Created At"]
-                st.dataframe(df, use_container_width=True)
+                st.dataframe(df, width='stretch')
 
                 # View record detail
                 st.divider()

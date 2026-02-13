@@ -19,7 +19,7 @@ if database.is_db_configured():
     database.init_tables()
 
 st.title("ISAAC AI-Ready Record Portal")
-st.markdown("### The Middleware for Scientific Semantics — v0.5.0")
+st.markdown("### The Middleware for Scientific Semantics")
 
 # Check database status
 db_connected = database.test_db_connection()
@@ -28,7 +28,7 @@ db_connected = database.test_db_connection()
 st.sidebar.title("Navigation")
 page = st.sidebar.radio(
     "Go to",
-    ["Ontology Editor", "Record Validator", "Record Form", "Saved Records", "About"]
+    ["Ontology Editor", "Record Validator", "Record Form", "Saved Records", "API Documentation", "About"]
 )
 
 # Database status indicator
@@ -342,7 +342,7 @@ elif page == "Record Validator":
                 def build_record_from_row(row):
                     """Build an ISAAC record dict from an Excel DataFrame row."""
                     import ulid
-                    record_id = str(ulid.new())
+                    record_id = str(ulid.ULID())
 
                     record = {
                         "isaac_record_version": "1.0",
@@ -611,17 +611,116 @@ elif page == "Saved Records":
 
 
 # =============================================================================
+# PAGE: API Documentation
+# =============================================================================
+elif page == "API Documentation":
+    st.header("API Documentation")
+    st.info("The ISAAC Portal includes a REST API sidecar for programmatic record submission and validation.")
+
+    st.subheader("Authentication")
+    st.markdown("""
+    The API is protected by [Authentik](https://goauthentik.io/) forward-auth when accessed through
+    `https://isaac.slac.stanford.edu`. To make direct API calls, you need an **Authentik API token**.
+
+    1. Log in to the [Authentik admin interface](https://isaac.slac.stanford.edu/auth/if/admin/)
+    2. Navigate to **Directory > Tokens and App passwords** and create a new token
+    3. Pass the token in the `Authorization` header:
+    """)
+    st.code('Authorization: Bearer <your-authentik-token>', language="text")
+
+    st.subheader("Base URL")
+    st.code("https://isaac.slac.stanford.edu/portal/api", language="text")
+
+    st.divider()
+
+    # --- Health ---
+    st.subheader("Endpoints")
+
+    st.markdown("#### Health Check")
+    st.code("GET /portal/api/health", language="text")
+    st.markdown("Returns `200` with `{\"status\": \"healthy\"}`. Use for connectivity checks.")
+
+    st.divider()
+
+    # --- Validate ---
+    st.markdown("#### Validate a Record (dry-run)")
+    st.code("POST /portal/api/validate", language="text")
+    st.markdown("""
+    Validates a JSON record against the ISAAC schema **without** saving to the database.
+    Use this to check your data before committing it.
+    """)
+    st.markdown("**Example request:**")
+    st.code('''curl -X POST https://isaac.slac.stanford.edu/portal/api/validate \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer <token>" \\
+  -d '{
+    "isaac_record_version": "1.0",
+    "record_id": "01JFH3Q8Z1Q9F0XG3V7N4K2M8C",
+    "record_type": "evidence",
+    "record_domain": "characterization",
+    "timestamps": { "created_utc": "2025-12-14T20:15:00Z" },
+    "acquisition_source": { "source_type": "facility" },
+    "sample": {
+      "material": { "name": "Copper(II) Oxide", "formula": "CuO2", "provenance": "commercial" },
+      "sample_form": "pellet"
+    }
+  }' ''', language="bash")
+    st.markdown("**Responses:**")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("*Valid:*")
+        st.code('{ "valid": true }', language="json")
+    with col2:
+        st.markdown("*Invalid:*")
+        st.code('''{ "valid": false, "errors": [
+    { "path": "record_type", "message": "'bad' is not one of [...]" }
+  ]}''', language="json")
+
+    st.divider()
+
+    # --- Create Record ---
+    st.markdown("#### Create a Record (validate + write)")
+    st.code("POST /portal/api/records", language="text")
+    st.markdown("""
+    Validates the record and, **if valid**, persists it to the database.
+    This is the "write-if-valid" endpoint — invalid records are rejected without side effects.
+    """)
+    st.markdown("**Responses:**")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("*Success (201):*")
+        st.code('{ "success": true, "record_id": "01JFH..." }', language="json")
+    with col2:
+        st.markdown("*Validation failure (400):*")
+        st.code('''{ "success": false,
+  "reason": "validation_failed",
+  "errors": [...] }''', language="json")
+
+    st.divider()
+
+    # --- List / Get ---
+    st.markdown("#### List Records")
+    st.code("GET /portal/api/records?limit=100&offset=0", language="text")
+    st.markdown("Returns an array of record summaries (record ID, type, domain, creation timestamp).")
+
+    st.markdown("#### Get a Single Record")
+    st.code("GET /portal/api/records/<record_id>", language="text")
+    st.markdown("Returns the full JSON for a specific record by its ULID.")
+
+    st.divider()
+    st.markdown(f"**Schema version: ISAAC AI-Ready Record v1.0**")
+
+
+# =============================================================================
 # PAGE: About
 # =============================================================================
 elif page == "About":
     st.markdown("""
-    **ISAAC Portal v0.8**
-
     Features:
     - **Ontology Editor**: Browse and edit the ISAAC vocabulary
     - **Record Validator**: Validate Excel files against the schema and save to database
     - **Record Form**: Manually create ISAAC records
     - **Saved Records**: View and manage records in the database
-
-    Schema version: ISAAC AI-Ready Record v1.0
+    - **API Documentation**: REST API reference for programmatic access
     """)
+    st.markdown("**Schema version: ISAAC AI-Ready Record v1.0**")

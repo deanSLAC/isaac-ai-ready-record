@@ -13,7 +13,7 @@ import ontology
 try:
     import ulid
     def generate_ulid():
-        return str(ulid.new())
+        return str(ulid.ULID())
 except ImportError:
     import time
     import random

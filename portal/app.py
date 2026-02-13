@@ -28,7 +28,7 @@ db_connected = database.test_db_connection()
 st.sidebar.title("Navigation")
 page = st.sidebar.radio(
     "Go to",
-    ["Ontology Editor", "Record Validator", "Record Form", "Saved Records", "API Documentation", "About"]
+    ["Ontology Editor", "Record Form", "Record Validator", "Saved Records", "API Documentation", "About"]
 )
 
 # Database status indicator

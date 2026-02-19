@@ -99,6 +99,15 @@ def init_tables():
         cur.execute('CREATE INDEX IF NOT EXISTS idx_records_created ON records(created_at)')
         cur.execute('CREATE INDEX IF NOT EXISTS idx_records_data_gin ON records USING GIN (data)')
 
+        # Create portal access log table
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS portal_access_log (
+                id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                username VARCHAR(255),
+                accessed_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        ''')
+
         conn.commit()
         cur.close()
         conn.close()
@@ -372,6 +381,90 @@ def delete_template(name: str) -> bool:
         deleted = cur.fetchone()
         conn.commit()
         return deleted is not None
+    finally:
+        cur.close()
+        conn.close()
+
+
+# =============================================================================
+# Dashboard / Access Log Operations
+# =============================================================================
+
+def get_dashboard_stats() -> dict:
+    """
+    Get dashboard statistics: total records, last indexed time, and counts by type.
+
+    Returns:
+        Dict with 'total', 'last_indexed', and 'by_type' keys
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute('''
+            SELECT
+                COUNT(*) AS total,
+                MAX(created_at) AS last_indexed
+            FROM records
+        ''')
+        row = cur.fetchone()
+
+        cur.execute('''
+            SELECT record_type, COUNT(*) AS cnt
+            FROM records
+            GROUP BY record_type
+            ORDER BY cnt DESC
+        ''')
+        by_type = {r['record_type']: r['cnt'] for r in cur.fetchall()}
+
+        return {
+            'total': row['total'],
+            'last_indexed': row['last_indexed'],
+            'by_type': by_type,
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+def log_access(username: str = "anonymous"):
+    """Insert a row into the portal_access_log table."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            'INSERT INTO portal_access_log (username) VALUES (%s)',
+            (username,)
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_access_stats() -> dict:
+    """
+    Get portal access statistics.
+
+    Returns:
+        Dict with 'total_visits' and 'last_access' keys
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute('''
+            SELECT
+                COUNT(*) AS total_visits,
+                MAX(accessed_at) AS last_access
+            FROM portal_access_log
+        ''')
+        row = cur.fetchone()
+        return {
+            'total_visits': row['total_visits'],
+            'last_access': row['last_access'],
+        }
     finally:
         cur.close()
         conn.close()

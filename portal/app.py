@@ -12,23 +12,34 @@ from datetime import datetime
 importlib.reload(ontology)
 
 # Page Config
-st.set_page_config(page_title="ISAAC Portal", layout="wide")
+st.set_page_config(page_title="ISAAC Portal", layout="wide", initial_sidebar_state="collapsed")
 
 # Initialize database tables on startup (if configured)
 if database.is_db_configured():
     database.init_tables()
 
-st.title("ISAAC AI-Ready Record Portal")
-st.markdown("### The Middleware for Scientific Semantics")
-
 # Check database status
 db_connected = database.test_db_connection()
+
+# Log portal access (once per session)
+if "access_logged" not in st.session_state:
+    st.session_state.access_logged = True
+    if db_connected:
+        try:
+            headers = st.context.headers
+            username = headers.get("X-authentik-username", "anonymous")
+        except Exception:
+            username = "anonymous"
+        try:
+            database.log_access(username)
+        except Exception:
+            pass
 
 # Sidebar
 st.sidebar.title("Navigation")
 page = st.sidebar.radio(
     "Go to",
-    ["Ontology Editor", "Record Form", "Record Validator", "Saved Records", "API Documentation", "About"]
+    ["Dashboard", "Ontology Editor", "Record Form", "Record Validator", "Saved Records", "API Documentation", "About"]
 )
 
 # Database status indicator
@@ -204,9 +215,76 @@ def generate_mermaid_code(active_section=None, active_category=None):
 
 
 # =============================================================================
+# PAGE: Dashboard
+# =============================================================================
+if page == "Dashboard":
+    st.title("ISAAC AI-Ready Record Portal")
+    st.markdown("### The Middleware for Scientific Semantics")
+
+    if not db_connected:
+        # Graceful offline state
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Database", "Offline")
+        c2.metric("Total Records", "N/A")
+        c3.metric("Last Indexed", "N/A")
+        c4.metric("Portal Visits", "N/A")
+        st.info("Database not connected. Configure PGHOST, PGUSER, PGPASSWORD, PGDATABASE environment variables.")
+    else:
+        try:
+            stats = database.get_dashboard_stats()
+            access = database.get_access_stats()
+
+            # --- Row 1: Status Cards ---
+            c1, c2, c3, c4 = st.columns(4)
+
+            c1.metric("Database", "Online")
+
+            c2.metric("Total Records", f"{stats['total']:,}")
+
+            # Last indexed — relative time
+            last_indexed = stats.get('last_indexed')
+            if last_indexed:
+                from datetime import timezone
+                delta = datetime.now(timezone.utc) - last_indexed
+                if delta.days > 0:
+                    indexed_label = f"{delta.days}d ago"
+                elif delta.seconds >= 3600:
+                    indexed_label = f"{delta.seconds // 3600}h ago"
+                elif delta.seconds >= 60:
+                    indexed_label = f"{delta.seconds // 60}m ago"
+                else:
+                    indexed_label = "just now"
+            else:
+                indexed_label = "No records"
+            c3.metric("Last Indexed", indexed_label)
+
+            last_access = access.get('last_access')
+            if last_access:
+                visit_help = f"Last: {last_access.strftime('%Y-%m-%d %H:%M')}"
+            else:
+                visit_help = ""
+            c4.metric("Portal Visits", f"{access['total_visits']:,}", help=visit_help)
+
+            # --- Row 2: Records by Type ---
+            by_type = stats.get('by_type', {})
+            if by_type:
+                st.subheader("Records by Type")
+                type_df = pd.DataFrame(
+                    list(by_type.items()),
+                    columns=["Record Type", "Count"]
+                ).set_index("Record Type")
+                st.bar_chart(type_df)
+            else:
+                st.info("No records yet. Use the Record Validator or Record Form to add data.")
+
+        except Exception as e:
+            st.error(f"Error loading dashboard: {e}")
+
+
+# =============================================================================
 # PAGE: Ontology Editor
 # =============================================================================
-if page == "Ontology Editor":
+elif page == "Ontology Editor":
     st.header("Living Ontology")
     st.info("Navigate via the dropdowns on the left. The Visual Map updates to show context.")
 
@@ -717,6 +795,7 @@ elif page == "API Documentation":
 elif page == "About":
     st.markdown("""
     Features:
+    - **Dashboard**: Database health, record stats, and access metrics at a glance
     - **Ontology Editor**: Browse and edit the ISAAC vocabulary
     - **Record Validator**: Validate Excel files against the schema and save to database
     - **Record Form**: Manually create ISAAC records

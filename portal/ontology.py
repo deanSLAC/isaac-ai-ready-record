@@ -216,7 +216,7 @@ def _regenerate_yaml_block(vocab_for_section: dict) -> str:
 # =============================================================================
 
 LLM_API_URL = "https://aiapi-prod.stanford.edu/v1/chat/completions"
-LLM_MODEL = "claude-4-sonnet"
+LLM_MODEL = "gemini-2.5-pro"
 
 
 def _get_wiki_page_content(section: str) -> str:

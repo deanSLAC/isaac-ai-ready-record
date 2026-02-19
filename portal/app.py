@@ -47,21 +47,19 @@ if "access_logged" not in st.session_state:
         except Exception:
             pass
 
-# Auto-sync from wiki on first load if cache is stale (>1 hour)
-if "wiki_sync_checked" not in st.session_state:
-    st.session_state.wiki_sync_checked = True
-    if db_connected and os.environ.get("WIKI_REPO_URL"):
-        try:
-            last_sync = database.get_last_sync()
-            need_sync = True
-            if last_sync and last_sync.get('synced_at'):
-                age = datetime.now(timezone.utc) - last_sync['synced_at']
-                if age.total_seconds() < 3600:
-                    need_sync = False
-            if need_sync:
-                ontology.sync_from_wiki(synced_by="auto")
-        except Exception:
-            pass
+# Auto-sync from wiki on every page load if cache is stale (>5 min)
+if db_connected and os.environ.get("WIKI_REPO_URL"):
+    try:
+        last_sync = database.get_last_sync()
+        need_sync = True
+        if last_sync and last_sync.get('synced_at'):
+            age = datetime.now(timezone.utc) - last_sync['synced_at']
+            if age.total_seconds() < 300:
+                need_sync = False
+        if need_sync:
+            ontology.sync_from_wiki(synced_by="auto")
+    except Exception:
+        pass
 
 # Initialize page state
 if "current_page" not in st.session_state:

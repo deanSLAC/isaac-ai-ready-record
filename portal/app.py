@@ -11,8 +11,16 @@ from datetime import datetime
 
 importlib.reload(ontology)
 
-# Page Config
+# Page Config — hide the default sidebar entirely
 st.set_page_config(page_title="ISAAC Portal", layout="wide", initial_sidebar_state="collapsed")
+
+# CSS: hide the native sidebar and its toggle button
+st.markdown("""
+<style>
+[data-testid="stSidebar"] { display: none; }
+[data-testid="collapsedControl"] { display: none; }
+</style>
+""", unsafe_allow_html=True)
 
 # Initialize database tables on startup (if configured)
 if database.is_db_configured():
@@ -35,18 +43,28 @@ if "access_logged" not in st.session_state:
         except Exception:
             pass
 
-# Sidebar
-st.sidebar.title("Navigation")
-page = st.sidebar.radio(
-    "Go to",
-    ["Dashboard", "Ontology Editor", "Record Form", "Record Validator", "Saved Records", "API Documentation", "About"]
-)
+# Initialize page state
+if "current_page" not in st.session_state:
+    st.session_state.current_page = "Dashboard"
 
-# Database status indicator
-if db_connected:
-    st.sidebar.success("Database Connected")
-else:
-    st.sidebar.warning("Database Not Connected")
+PAGES = ["Dashboard", "Ontology Editor", "Record Form", "Record Validator", "Saved Records", "API Documentation", "About"]
+
+# --- Top navigation bar: hamburger menu + DB status ---
+nav_col, status_col = st.columns([6, 1])
+with nav_col:
+    with st.popover("☰ Menu"):
+        for p in PAGES:
+            if st.button(p, key=f"nav_{p}", use_container_width=True,
+                         type="primary" if p == st.session_state.current_page else "secondary"):
+                st.session_state.current_page = p
+                st.rerun()
+with status_col:
+    if db_connected:
+        st.success("DB Online")
+    else:
+        st.warning("DB Offline")
+
+page = st.session_state.current_page
 
 # --- CONFIG: Display Names ---
 DISPLAY_MAP = {

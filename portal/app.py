@@ -485,9 +485,19 @@ elif page == "Admin Review":
             pending = database.list_proposals(status="pending")
             if not pending:
                 st.info("No pending proposals.")
+
+            # Session state to track which proposal is in the "review draft" step
+            if "reviewing_proposal_id" not in st.session_state:
+                st.session_state.reviewing_proposal_id = None
+            if "draft_wiki_prose" not in st.session_state:
+                st.session_state.draft_wiki_prose = ""
+            if "draft_yaml_desc" not in st.session_state:
+                st.session_state.draft_yaml_desc = ""
+
             for prop in pending:
                 with st.container(border=True):
-                    st.markdown(f"**Proposal #{prop['id']}** — `{prop['proposal_type']}`")
+                    pid = prop['id']
+                    st.markdown(f"**Proposal #{pid}** — `{prop['proposal_type']}`")
                     st.write(f"**Section:** {prop['section']}")
                     if prop.get('category'):
                         st.write(f"**Category:** {prop['category']}")
@@ -497,31 +507,110 @@ elif page == "Admin Review":
                         st.write(f"**Description:** {prop['description']}")
                     st.caption(f"Proposed by {prop['proposed_by']} on {prop['proposed_at'].strftime('%Y-%m-%d %H:%M') if prop.get('proposed_at') else '?'}")
 
-                    comment = st.text_input("Comment (optional)", key=f"review_comment_{prop['id']}")
-                    btn_cols = st.columns(2)
-                    with btn_cols[0]:
-                        if st.button("Approve", key=f"approve_{prop['id']}", type="primary"):
-                            ok, msg = database.review_proposal(prop['id'], "approved", current_username, comment)
-                            if ok:
-                                # Apply the approved proposal (update cache + push to wiki)
-                                apply_ok, apply_msg, wiki_ok = ontology.apply_approved_proposal(prop)
-                                if apply_ok:
-                                    st.success(f"Approved and applied. {apply_msg}")
-                                    if not wiki_ok:
-                                        st.warning(f"Wiki push issue: {apply_msg}")
+                    is_reviewing = (st.session_state.reviewing_proposal_id == pid)
+
+                    if not is_reviewing:
+                        # Step 1: Generate draft or quick actions
+                        btn_cols = st.columns(3)
+                        with btn_cols[0]:
+                            if st.button("Generate Wiki Text", key=f"gen_{pid}", type="primary"):
+                                with st.spinner("Generating wiki prose with AI..."):
+                                    result = ontology.generate_wiki_description(
+                                        section=prop['section'],
+                                        category=prop.get('category', ''),
+                                        term=prop.get('term', ''),
+                                        proposal_type=prop['proposal_type']
+                                    )
+                                if result['success']:
+                                    st.session_state.reviewing_proposal_id = pid
+                                    st.session_state.draft_wiki_prose = result['wiki_prose']
+                                    st.session_state.draft_yaml_desc = result['yaml_description']
+                                    st.rerun()
                                 else:
-                                    st.warning(f"Approved but failed to apply: {apply_msg}")
+                                    st.error(f"LLM error: {result['error']}")
+                        with btn_cols[1]:
+                            if st.button("Approve (no prose)", key=f"quick_approve_{pid}"):
+                                comment = ""
+                                ok, msg = database.review_proposal(pid, "approved", current_username, comment)
+                                if ok:
+                                    apply_ok, apply_msg, wiki_ok = ontology.apply_approved_proposal(prop)
+                                    if apply_ok:
+                                        st.success(f"Approved and applied. {apply_msg}")
+                                    else:
+                                        st.warning(f"Approved but failed to apply: {apply_msg}")
+                                    st.rerun()
+                                else:
+                                    st.error(msg)
+                        with btn_cols[2]:
+                            if st.button("Reject", key=f"reject_{pid}"):
+                                ok, msg = database.review_proposal(pid, "rejected", current_username, "")
+                                if ok:
+                                    st.success("Proposal rejected.")
+                                    st.rerun()
+                                else:
+                                    st.error(msg)
+                    else:
+                        # Step 2: Review and edit the generated draft
+                        st.divider()
+                        st.markdown("**AI-Generated Wiki Text** — edit below before approving:")
+                        edited_prose = st.text_area(
+                            "Wiki prose (will be inserted into the wiki page)",
+                            value=st.session_state.draft_wiki_prose,
+                            height=150,
+                            key=f"prose_{pid}"
+                        )
+                        edited_yaml_desc = st.text_input(
+                            "YAML description (one-line for the vocabulary block)",
+                            value=st.session_state.draft_yaml_desc,
+                            key=f"yaml_desc_{pid}"
+                        )
+                        review_comment = st.text_input("Review comment (optional)", key=f"comment_{pid}")
+
+                        confirm_cols = st.columns(3)
+                        with confirm_cols[0]:
+                            if st.button("Approve & Push to Wiki", key=f"confirm_{pid}", type="primary"):
+                                ok, msg = database.review_proposal(pid, "approved", current_username, review_comment)
+                                if ok:
+                                    # Update proposal description with the yaml_desc if provided
+                                    enriched_prop = dict(prop)
+                                    if edited_yaml_desc:
+                                        enriched_prop['_yaml_description'] = edited_yaml_desc
+                                    apply_ok, apply_msg, wiki_ok = ontology.apply_approved_proposal(
+                                        enriched_prop, wiki_prose=edited_prose
+                                    )
+                                    if apply_ok:
+                                        st.success(f"Approved, applied, and wiki updated. {apply_msg}")
+                                        if not wiki_ok:
+                                            st.warning(f"Wiki push issue: {apply_msg}")
+                                    else:
+                                        st.warning(f"Approved but failed to apply: {apply_msg}")
+                                    st.session_state.reviewing_proposal_id = None
+                                    st.session_state.draft_wiki_prose = ""
+                                    st.session_state.draft_yaml_desc = ""
+                                    st.rerun()
+                                else:
+                                    st.error(msg)
+                        with confirm_cols[1]:
+                            if st.button("Regenerate", key=f"regen_{pid}"):
+                                with st.spinner("Regenerating..."):
+                                    result = ontology.generate_wiki_description(
+                                        section=prop['section'],
+                                        category=prop.get('category', ''),
+                                        term=prop.get('term', ''),
+                                        proposal_type=prop['proposal_type']
+                                    )
+                                if result['success']:
+                                    st.session_state.draft_wiki_prose = result['wiki_prose']
+                                    st.session_state.draft_yaml_desc = result['yaml_description']
+                                    st.rerun()
+                                else:
+                                    st.error(f"LLM error: {result['error']}")
+                        with confirm_cols[2]:
+                            if st.button("Cancel", key=f"cancel_{pid}"):
+                                st.session_state.reviewing_proposal_id = None
+                                st.session_state.draft_wiki_prose = ""
+                                st.session_state.draft_yaml_desc = ""
                                 st.rerun()
-                            else:
-                                st.error(msg)
-                    with btn_cols[1]:
-                        if st.button("Reject", key=f"reject_{prop['id']}"):
-                            ok, msg = database.review_proposal(prop['id'], "rejected", current_username, comment)
-                            if ok:
-                                st.success("Proposal rejected.")
-                                st.rerun()
-                            else:
-                                st.error(msg)
 
         with tab_approved:
             approved = database.list_proposals(status="approved")

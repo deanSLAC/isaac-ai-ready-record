@@ -16,6 +16,7 @@ import shutil
 
 import yaml
 import git
+import requests as http_requests
 
 # Path to vocabulary file in data/ directory (fallback)
 VOCAB_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "vocabulary.json")
@@ -210,9 +211,166 @@ def _regenerate_yaml_block(vocab_for_section: dict) -> str:
     return "\n".join(lines)
 
 
-def push_change_to_wiki(section: str, vocab_for_section: dict) -> tuple:
+# =============================================================================
+# LLM-Assisted Wiki Prose Generation (Stanford AI API Gateway)
+# =============================================================================
+
+LLM_API_URL = "https://aiapi-prod.stanford.edu/v1/chat/completions"
+LLM_MODEL = "claude-4-5-sonnet"
+
+
+def _get_wiki_page_content(section: str) -> str:
+    """Clone the wiki and return the full markdown content for a section's page."""
+    wiki_page = SECTION_TO_WIKI_PAGE.get(section)
+    if not wiki_page:
+        return ""
+
+    tmp_dir = tempfile.mkdtemp(prefix="isaac_wiki_read_")
+    try:
+        repo_path = _clone_or_pull_wiki(tmp_dir)
+        md_file = os.path.join(repo_path, f"{wiki_page}.md")
+        if not os.path.exists(md_file):
+            return ""
+        with open(md_file, 'r') as f:
+            return f.read()
+    except Exception:
+        return ""
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def generate_wiki_description(section: str, category: str,
+                              term: str = None, proposal_type: str = "add_term") -> dict:
     """
-    Clone the wiki, update the YAML block for the given section, commit & push.
+    Use Stanford AI API to generate wiki-style description for a new term or category.
+
+    Returns:
+        {
+            'yaml_description': str,   # One-line description for YAML block
+            'wiki_prose': str,         # Markdown prose to insert into wiki page
+            'success': bool,
+            'error': str or None
+        }
+    """
+    api_key = os.environ.get("ISAAC_LLM_API_KEY", "")
+    if not api_key:
+        return {
+            'yaml_description': '',
+            'wiki_prose': '',
+            'success': False,
+            'error': 'ISAAC_LLM_API_KEY not configured'
+        }
+
+    # Get existing wiki page for tone reference
+    wiki_content = _get_wiki_page_content(section)
+    if not wiki_content:
+        wiki_content = "(Wiki page not available — generate in a generic scientific style.)"
+
+    if proposal_type == "add_term":
+        prompt = f"""You are editing the ISAAC AI-Ready Record wiki — a rigorous scientific metadata standard.
+
+Below is the FULL content of the wiki page for the "{section}" section. Study its tone, structure, and the way existing enum values are defined (terse, precise, one-line definitions using the pattern `*   \\`value\\`: Definition.`).
+
+---
+{wiki_content}
+---
+
+A new term `{term}` is being added to the enum `{category}`.
+
+Generate TWO things:
+
+1. **yaml_description**: If the existing YAML description for this category is adequate, return it unchanged. Only update it if the new term changes the scope.
+
+2. **wiki_prose**: A single bullet-point definition for `{term}` matching the EXACT style of the existing bullet points for this enum. Format: `*   \\`{term}\\`: <terse definition>.`
+
+Return ONLY valid JSON (no markdown fencing):
+{{"yaml_description": "...", "wiki_prose": "..."}}"""
+
+    elif proposal_type == "add_category":
+        prompt = f"""You are editing the ISAAC AI-Ready Record wiki — a rigorous scientific metadata standard.
+
+Below is the FULL content of the wiki page for the "{section}" section. Study its tone, structure, and the way subsections are written.
+
+---
+{wiki_content}
+---
+
+A new category `{category}` is being added to this section.
+User description: "{term or ''}"
+
+Generate TWO things:
+
+1. **yaml_description**: A terse one-line description for this category (matching the style of existing YAML descriptions).
+
+2. **wiki_prose**: A new subsection for this category matching the wiki's style. Include a heading (### level), type, description, and any relevant constraints. Keep it concise and normative.
+
+Return ONLY valid JSON (no markdown fencing):
+{{"yaml_description": "...", "wiki_prose": "..."}}"""
+    else:
+        return {'yaml_description': '', 'wiki_prose': '', 'success': False, 'error': f'Unknown type: {proposal_type}'}
+
+    try:
+        resp = http_requests.post(
+            LLM_API_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": LLM_MODEL,
+                "stream": False,
+                "temperature": 0.3,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=60,
+        )
+
+        if resp.status_code != 200:
+            return {
+                'yaml_description': '', 'wiki_prose': '', 'success': False,
+                'error': f'LLM API returned {resp.status_code}: {resp.text[:200]}'
+            }
+
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"].strip()
+
+        # Parse the JSON response (handle potential markdown fencing)
+        content = re.sub(r'^```json\s*', '', content)
+        content = re.sub(r'\s*```$', '', content)
+        result = json.loads(content)
+
+        return {
+            'yaml_description': result.get('yaml_description', ''),
+            'wiki_prose': result.get('wiki_prose', ''),
+            'success': True,
+            'error': None
+        }
+
+    except json.JSONDecodeError as e:
+        return {
+            'yaml_description': '', 'wiki_prose': content if 'content' in dir() else '',
+            'success': False, 'error': f'Failed to parse LLM response as JSON: {e}'
+        }
+    except Exception as e:
+        return {
+            'yaml_description': '', 'wiki_prose': '', 'success': False,
+            'error': f'LLM request failed: {e}'
+        }
+
+
+# =============================================================================
+# Wiki Push Operations
+# =============================================================================
+
+def push_change_to_wiki(section: str, vocab_for_section: dict, wiki_prose: str = "") -> tuple:
+    """
+    Clone the wiki, update the YAML block for the given section,
+    optionally insert wiki prose, commit & push.
+
+    Args:
+        section: section name (e.g. "System")
+        vocab_for_section: full vocabulary dict for this section
+        wiki_prose: optional markdown prose to insert before the Controlled Vocabulary section
 
     Returns:
         (success: bool, message: str)
@@ -236,13 +394,24 @@ def push_change_to_wiki(section: str, vocab_for_section: dict) -> tuple:
         with open(md_file, 'r') as f:
             content = f.read()
 
+        # Insert wiki prose before the Controlled Vocabulary section (if provided)
+        if wiki_prose and wiki_prose.strip():
+            cv_pattern = r'(##\s*Controlled\s+Vocabulary)'
+            match = re.search(cv_pattern, content, re.IGNORECASE)
+            if match:
+                insert_pos = match.start()
+                content = content[:insert_pos] + wiki_prose.strip() + "\n\n" + content[insert_pos:]
+            else:
+                # No CV section found, just append prose
+                content = content.rstrip() + "\n\n" + wiki_prose.strip() + "\n"
+
+        # Update the YAML block
         new_yaml = _regenerate_yaml_block(vocab_for_section)
         new_block = f"## Controlled Vocabulary\n\n```yaml\n{new_yaml}\n```"
 
-        # Replace existing block or append
-        pattern = r'##\s*Controlled\s+Vocabulary\s*\n+```yaml\s*\n.*?```'
-        if re.search(pattern, content, re.DOTALL | re.IGNORECASE):
-            new_content = re.sub(pattern, new_block, content, flags=re.DOTALL | re.IGNORECASE)
+        yaml_pattern = r'##\s*Controlled\s+Vocabulary\s*\n+```yaml\s*\n.*?```'
+        if re.search(yaml_pattern, content, re.DOTALL | re.IGNORECASE):
+            new_content = re.sub(yaml_pattern, new_block, content, flags=re.DOTALL | re.IGNORECASE)
         else:
             new_content = content.rstrip() + "\n\n" + new_block + "\n"
 
@@ -266,12 +435,13 @@ def push_change_to_wiki(section: str, vocab_for_section: dict) -> tuple:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def apply_approved_proposal(proposal: dict) -> tuple:
+def apply_approved_proposal(proposal: dict, wiki_prose: str = "") -> tuple:
     """
-    Apply an approved proposal: update DB cache and push to wiki.
+    Apply an approved proposal: update DB cache and push to wiki (with prose).
 
     Args:
         proposal: dict with proposal_type, section, category, term, description
+        wiki_prose: LLM-generated (admin-edited) prose to insert into wiki page
 
     Returns:
         (success: bool, message: str, wiki_push_ok: bool)
@@ -310,11 +480,11 @@ def apply_approved_proposal(proposal: dict) -> tuple:
         except Exception as e:
             return False, f"Failed to update cache: {e}", False
 
-    # Push to wiki
+    # Push to wiki (with prose)
     wiki_push_ok = True
     wiki_msg = ""
     try:
-        ok, wiki_msg = push_change_to_wiki(section, vocab[section])
+        ok, wiki_msg = push_change_to_wiki(section, vocab[section], wiki_prose=wiki_prose)
         wiki_push_ok = ok
     except Exception as e:
         wiki_push_ok = False

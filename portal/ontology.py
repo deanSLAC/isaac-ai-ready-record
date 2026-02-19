@@ -240,9 +240,17 @@ def _get_wiki_page_content(section: str) -> str:
 
 
 def generate_wiki_description(section: str, category: str,
-                              term: str = None, proposal_type: str = "add_term") -> dict:
+                              term: str = None, proposal_type: str = "add_term",
+                              user_description: str = "") -> dict:
     """
     Use Stanford AI API to generate wiki-style description for a new term or category.
+
+    Args:
+        section: ontology section (e.g. "System")
+        category: category key (e.g. "system.domain")
+        term: new term value (for add_term)
+        proposal_type: 'add_term' or 'add_category'
+        user_description: proposer's plain-language description of the term/category
 
     Returns:
         {
@@ -277,6 +285,11 @@ Below is the FULL content of the wiki page for the "{section}" section. Study it
 
 A new term `{term}` is being added to the enum `{category}`.
 
+The proposer described this term as:
+"{user_description or '(no description provided)'}"
+
+Use this description as the basis for the definition, but rewrite it to match the wiki's terse, normative style.
+
 Generate TWO things:
 
 1. **yaml_description**: If the existing YAML description for this category is adequate, return it unchanged. Only update it if the new term changes the scope.
@@ -296,7 +309,11 @@ Below is the FULL content of the wiki page for the "{section}" section. Study it
 ---
 
 A new category `{category}` is being added to this section.
-User description: "{term or ''}"
+
+The proposer described this category as:
+"{user_description or term or '(no description provided)'}"
+
+Use this description as the basis, but rewrite to match the wiki's terse, normative style.
 
 Generate TWO things:
 

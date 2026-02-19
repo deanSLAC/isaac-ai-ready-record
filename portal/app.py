@@ -400,14 +400,22 @@ elif page == "Ontology Editor":
             prop_cats = list(ontology.get_categories(prop_section).keys())
             prop_category = st.selectbox("Category", prop_cats, key="prop_cat_term") if prop_cats else None
             prop_term = st.text_input("New Term", placeholder="e.g. rotating_cylinder", key="prop_term_input")
+            prop_term_desc = st.text_area(
+                "Description (required)",
+                placeholder="Explain what this term means and why it should be added. "
+                            "This will be used to generate the wiki definition.",
+                key="prop_term_desc",
+                height=100,
+            )
             if st.button("Submit Proposal", key="submit_add_term"):
-                if prop_term and prop_category and db_connected:
+                if prop_term and prop_category and prop_term_desc and prop_term_desc.strip() and db_connected:
                     try:
                         pid = database.create_proposal(
                             proposal_type="add_term",
                             section=prop_section,
                             category=prop_category,
                             term=prop_term,
+                            description=prop_term_desc.strip(),
                             proposed_by=current_username
                         )
                         st.success(f"Proposal #{pid} submitted! An admin will review it.")
@@ -416,7 +424,7 @@ elif page == "Ontology Editor":
                 elif not db_connected:
                     st.warning("Database not connected. Proposals require a database.")
                 else:
-                    st.warning("Please fill in all fields.")
+                    st.warning("Please fill in all fields, including a description.")
 
         elif proposal_type == "Add Category":
             prop_section = st.selectbox("Section", sections, index=sections.index(selected_section) if selected_section in sections else 0, key="prop_sec_cat")
@@ -502,7 +510,9 @@ elif page == "Admin Review":
                     if prop.get('term'):
                         st.write(f"**Term:** {prop['term']}")
                     if prop.get('description'):
-                        st.write(f"**Description:** {prop['description']}")
+                        st.info(f"**Proposer's description:** {prop['description']}")
+                    else:
+                        st.warning("No description provided by proposer.")
                     st.caption(f"Proposed by {prop['proposed_by']} on {prop['proposed_at'].strftime('%Y-%m-%d %H:%M') if prop.get('proposed_at') else '?'}")
 
                     is_reviewing = (st.session_state.reviewing_proposal_id == pid)
@@ -517,7 +527,8 @@ elif page == "Admin Review":
                                         section=prop['section'],
                                         category=prop.get('category', ''),
                                         term=prop.get('term', ''),
-                                        proposal_type=prop['proposal_type']
+                                        proposal_type=prop['proposal_type'],
+                                        user_description=prop.get('description', '')
                                     )
                                 if result['success']:
                                     st.session_state.reviewing_proposal_id = pid
@@ -595,7 +606,8 @@ elif page == "Admin Review":
                                         section=prop['section'],
                                         category=prop.get('category', ''),
                                         term=prop.get('term', ''),
-                                        proposal_type=prop['proposal_type']
+                                        proposal_type=prop['proposal_type'],
+                                        user_description=prop.get('description', '')
                                     )
                                 if result['success']:
                                     st.session_state.draft_wiki_prose = result['wiki_prose']

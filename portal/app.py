@@ -653,139 +653,236 @@ elif page == "Admin Review":
 # PAGE: Record Validator
 # =============================================================================
 elif page == "Record Validator":
-    st.header("Excel Validator")
-    st.info("Upload an ISAAC Metadata Excel file to check for compliance and optionally save to the database.")
+    st.header("Record Validator")
 
     # API URL configuration
     api_url = os.environ.get("ISAAC_API_URL", "http://localhost:8502")
 
-    uploaded_file = st.file_uploader("Upload Excel", type=["xlsx"])
+    tab_excel, tab_json = st.tabs(["Excel Upload", "JSON Upload"])
 
-    if uploaded_file:
-        try:
-            # Read 'File List' tab
-            df = pd.read_excel(uploaded_file, sheet_name="File List")
-            st.success(f"Loaded {len(df)} rows from 'File List'.")
+    # ------------------------------------------------------------------
+    # JSON Upload tab
+    # ------------------------------------------------------------------
+    with tab_json:
+        st.info("Upload an ISAAC JSON record to validate against the schema **and** the living vocabulary.")
 
-            vocab = ontology.load_vocabulary()
+        json_file = st.file_uploader("Upload JSON", type=["json"], key="json_uploader")
 
-            # EXACT Mapping from Excel columns to schema paths
-            mapping = {
-                "Environment": ("Context", "context.environment"),
-                "Cell Type": ("Context", "context.electrochemistry.cell_type"),
-                "Flow Mode": ("Context", "context.transport.flow_mode"),
-                "Sample Form": ("Sample", "sample.sample_form"),
-                "Potential Scale": ("Context", "context.electrochemistry.potential_scale"),
-                "Reaction": ("Context", "context.electrochemistry.reaction"),
-                "Record Type": ("Record Info", "record_type")
-            }
+        if json_file:
+            try:
+                raw_text = json_file.read().decode("utf-8")
+                record_data = json.loads(raw_text)
 
-            def get_allowed_values(sec, cat):
-                if sec in vocab and cat in vocab[sec]:
-                    return set(vocab[sec][cat]['values'])
-                return set()
+                with st.expander("Record Preview", expanded=False):
+                    st.json(record_data)
 
-            all_valid = True
-            validation_results = []
+                if st.button("Validate", key="validate_json_btn", type="primary"):
+                    # Schema validation
+                    from jsonschema import Draft202012Validator
+                    schema_path = os.path.join(os.path.dirname(__file__), "..", "schema", "isaac_record_v1.json")
+                    with open(schema_path) as f:
+                        schema = json.load(f)
+                    validator = Draft202012Validator(schema)
 
-            for col, (sec, cat) in mapping.items():
-                if col in df.columns:
-                    st.subheader(f"Checking `{col}`...")
-                    allowed = get_allowed_values(sec, cat)
+                    schema_errors = []
+                    for err in validator.iter_errors(record_data):
+                        schema_errors.append({
+                            "path": "/".join(str(p) for p in err.absolute_path) or "(root)",
+                            "message": err.message,
+                        })
 
-                    if not allowed:
-                         st.warning(f"Schema definition for {col} ({cat}) not found.")
-                         continue
+                    # Vocabulary validation
+                    vocab_errors = ontology.validate_record_vocabulary(record_data)
 
-                    user_values = df[col].dropna().unique()
-                    invalid = [v for v in user_values if v not in allowed]
+                    # --- Display results ---
+                    col_schema, col_vocab = st.columns(2)
 
-                    if not invalid:
-                        st.write(f"All {len(user_values)} values are valid.")
-                        validation_results.append((col, True, len(user_values), []))
-                    else:
-                        all_valid = False
-                        st.error(f"Found {len(invalid)} invalid values!")
-                        st.write("Invalid terms:", invalid)
-                        st.write("Allowed terms:", allowed)
-                        validation_results.append((col, False, len(user_values), invalid))
+                    with col_schema:
+                        if not schema_errors:
+                            st.success("Schema: PASS")
+                        else:
+                            st.error(f"Schema: {len(schema_errors)} error(s)")
+                            for e in schema_errors:
+                                st.write(f"- **{e['path']}**: {e['message']}")
 
-            if all_valid:
-                st.balloons()
-                st.success("This file is fully compliant with the ISAAC v1.0 Ontology!")
+                    with col_vocab:
+                        if not vocab_errors:
+                            st.success("Vocabulary: PASS")
+                        else:
+                            st.error(f"Vocabulary: {len(vocab_errors)} error(s)")
+                            for e in vocab_errors:
+                                st.write(f"- **{e['path']}**: {e['message']}")
 
-                def build_record_from_row(row):
-                    """Build an ISAAC record dict from an Excel DataFrame row."""
-                    import ulid
-                    record_id = str(ulid.ULID())
+                    if not schema_errors and not vocab_errors:
+                        st.balloons()
+                        st.success("This record is fully compliant with the ISAAC schema and vocabulary!")
 
-                    record = {
-                        "isaac_record_version": "1.0",
-                        "record_id": record_id,
-                        "record_type": row.get("Record Type", "evidence"),
-                        "record_domain": row.get("Record Domain", "characterization"),
-                        "timestamps": {
-                            "created_utc": datetime.utcnow().isoformat() + "Z"
-                        },
-                        "acquisition_source": {
-                            "source_type": row.get("Source Type", "laboratory")
-                        }
-                    }
-
-                    # Add context if available
-                    context = {}
-                    if pd.notna(row.get("Environment")):
-                        context["environment"] = row["Environment"]
-                    if pd.notna(row.get("Temperature (K)")):
-                        context["temperature_K"] = float(row["Temperature (K)"])
-                    if context:
-                        record["context"] = context
-
-                    # Add sample if available
-                    sample = {}
-                    if pd.notna(row.get("Material Name")):
-                        sample["material"] = {"name": row["Material Name"]}
-                        if pd.notna(row.get("Formula")):
-                            sample["material"]["formula"] = row["Formula"]
-                    if pd.notna(row.get("Sample Form")):
-                        sample["sample_form"] = row["Sample Form"]
-                    if sample:
-                        record["sample"] = sample
-
-                    return record
-
-                def post_records_to_api(endpoint, action_label):
-                    """POST each row's record to the given API endpoint and display results."""
-                    saved_count = 0
-                    validation_fail_count = 0
-                    other_error_count = 0
-                    row_results = []
-
-                    progress = st.progress(0, text=f"{action_label}...")
-
-                    for idx, row in df.iterrows():
-                        progress.progress(
-                            (idx + 1) / len(df),
-                            text=f"{action_label}... row {idx + 1}/{len(df)}"
-                        )
-                        try:
-                            record = build_record_from_row(row)
-                            url = f"{api_url}{endpoint}"
-                            resp = requests.post(url, json=record, timeout=30)
-                            resp_data = resp.json()
-
-                            if resp.status_code == 200 or resp.status_code == 201:
-                                if resp_data.get("valid") is True or resp_data.get("success") is True:
-                                    record_id = resp_data.get("record_id", record.get("record_id", ""))
-                                    saved_count += 1
-                                    row_results.append({
-                                        "row": idx + 1,
-                                        "status": "success",
-                                        "record_id": record_id,
-                                        "detail": None
-                                    })
+                        # Offer save-to-database button
+                        if st.button("Save to Database", key="save_json_btn"):
+                            try:
+                                url = f"{api_url}/portal/api/records"
+                                resp = requests.post(url, json=record_data, timeout=30)
+                                resp_data = resp.json()
+                                if resp.status_code == 201 and resp_data.get("success"):
+                                    st.success(f"Record saved! ID: `{resp_data['record_id']}`")
                                 else:
-                                    # API returned 200 but valid/success is false
+                                    errs = resp_data.get("errors", [])
+                                    st.error(f"Save failed: {resp_data.get('reason', 'unknown')}")
+                                    for e in errs:
+                                        st.write(f"- {e.get('path', '?')}: {e.get('message', '')}")
+                            except requests.ConnectionError:
+                                st.error(f"Connection refused — is the API running at {api_url}?")
+                            except Exception as exc:
+                                st.error(f"Error saving record: {exc}")
+
+            except json.JSONDecodeError as exc:
+                st.error(f"Invalid JSON: {exc}")
+            except Exception as exc:
+                st.error(f"Error reading file: {exc}")
+
+    # ------------------------------------------------------------------
+    # Excel Upload tab (existing code)
+    # ------------------------------------------------------------------
+    with tab_excel:
+        st.info("Upload an ISAAC Metadata Excel file to check for compliance and optionally save to the database.")
+
+        uploaded_file = st.file_uploader("Upload Excel", type=["xlsx"], key="excel_uploader")
+
+        if uploaded_file:
+            try:
+                # Read 'File List' tab
+                df = pd.read_excel(uploaded_file, sheet_name="File List")
+                st.success(f"Loaded {len(df)} rows from 'File List'.")
+
+                vocab = ontology.load_vocabulary()
+
+                # EXACT Mapping from Excel columns to schema paths
+                mapping = {
+                    "Environment": ("Context", "context.environment"),
+                    "Cell Type": ("Context", "context.electrochemistry.cell_type"),
+                    "Flow Mode": ("Context", "context.transport.flow_mode"),
+                    "Sample Form": ("Sample", "sample.sample_form"),
+                    "Potential Scale": ("Context", "context.electrochemistry.potential_scale"),
+                    "Reaction": ("Context", "context.electrochemistry.reaction"),
+                    "Record Type": ("Record Info", "record_type")
+                }
+
+                def get_allowed_values(sec, cat):
+                    if sec in vocab and cat in vocab[sec]:
+                        return set(vocab[sec][cat]['values'])
+                    return set()
+
+                all_valid = True
+                validation_results = []
+
+                for col, (sec, cat) in mapping.items():
+                    if col in df.columns:
+                        st.subheader(f"Checking `{col}`...")
+                        allowed = get_allowed_values(sec, cat)
+
+                        if not allowed:
+                            st.warning(f"Schema definition for {col} ({cat}) not found.")
+                            continue
+
+                        user_values = df[col].dropna().unique()
+                        invalid = [v for v in user_values if v not in allowed]
+
+                        if not invalid:
+                            st.write(f"All {len(user_values)} values are valid.")
+                            validation_results.append((col, True, len(user_values), []))
+                        else:
+                            all_valid = False
+                            st.error(f"Found {len(invalid)} invalid values!")
+                            st.write("Invalid terms:", invalid)
+                            st.write("Allowed terms:", allowed)
+                            validation_results.append((col, False, len(user_values), invalid))
+
+                if all_valid:
+                    st.balloons()
+                    st.success("This file is fully compliant with the ISAAC v1.0 Ontology!")
+
+                    def build_record_from_row(row):
+                        """Build an ISAAC record dict from an Excel DataFrame row."""
+                        import ulid
+                        record_id = str(ulid.ULID())
+
+                        record = {
+                            "isaac_record_version": "1.0",
+                            "record_id": record_id,
+                            "record_type": row.get("Record Type", "evidence"),
+                            "record_domain": row.get("Record Domain", "characterization"),
+                            "timestamps": {
+                                "created_utc": datetime.utcnow().isoformat() + "Z"
+                            },
+                            "acquisition_source": {
+                                "source_type": row.get("Source Type", "laboratory")
+                            }
+                        }
+
+                        # Add context if available
+                        context = {}
+                        if pd.notna(row.get("Environment")):
+                            context["environment"] = row["Environment"]
+                        if pd.notna(row.get("Temperature (K)")):
+                            context["temperature_K"] = float(row["Temperature (K)"])
+                        if context:
+                            record["context"] = context
+
+                        # Add sample if available
+                        sample = {}
+                        if pd.notna(row.get("Material Name")):
+                            sample["material"] = {"name": row["Material Name"]}
+                            if pd.notna(row.get("Formula")):
+                                sample["material"]["formula"] = row["Formula"]
+                        if pd.notna(row.get("Sample Form")):
+                            sample["sample_form"] = row["Sample Form"]
+                        if sample:
+                            record["sample"] = sample
+
+                        return record
+
+                    def post_records_to_api(endpoint, action_label):
+                        """POST each row's record to the given API endpoint and display results."""
+                        saved_count = 0
+                        validation_fail_count = 0
+                        other_error_count = 0
+                        row_results = []
+
+                        progress = st.progress(0, text=f"{action_label}...")
+
+                        for idx, row in df.iterrows():
+                            progress.progress(
+                                (idx + 1) / len(df),
+                                text=f"{action_label}... row {idx + 1}/{len(df)}"
+                            )
+                            try:
+                                record = build_record_from_row(row)
+                                url = f"{api_url}{endpoint}"
+                                resp = requests.post(url, json=record, timeout=30)
+                                resp_data = resp.json()
+
+                                if resp.status_code == 200 or resp.status_code == 201:
+                                    if resp_data.get("valid") is True or resp_data.get("success") is True:
+                                        record_id = resp_data.get("record_id", record.get("record_id", ""))
+                                        saved_count += 1
+                                        row_results.append({
+                                            "row": idx + 1,
+                                            "status": "success",
+                                            "record_id": record_id,
+                                            "detail": None
+                                        })
+                                    else:
+                                        # API returned 200 but valid/success is false
+                                        errors = resp_data.get("errors", [])
+                                        reason = resp_data.get("reason", "Validation failed")
+                                        validation_fail_count += 1
+                                        row_results.append({
+                                            "row": idx + 1,
+                                            "status": "validation_failed",
+                                            "record_id": None,
+                                            "detail": {"reason": reason, "errors": errors}
+                                        })
+                                elif resp.status_code == 400:
                                     errors = resp_data.get("errors", [])
                                     reason = resp_data.get("reason", "Validation failed")
                                     validation_fail_count += 1
@@ -795,116 +892,106 @@ elif page == "Record Validator":
                                         "record_id": None,
                                         "detail": {"reason": reason, "errors": errors}
                                     })
-                            elif resp.status_code == 400:
-                                errors = resp_data.get("errors", [])
-                                reason = resp_data.get("reason", "Validation failed")
-                                validation_fail_count += 1
-                                row_results.append({
-                                    "row": idx + 1,
-                                    "status": "validation_failed",
-                                    "record_id": None,
-                                    "detail": {"reason": reason, "errors": errors}
-                                })
-                            else:
-                                reason = resp_data.get("reason", resp.text)
+                                else:
+                                    reason = resp_data.get("reason", resp.text)
+                                    other_error_count += 1
+                                    row_results.append({
+                                        "row": idx + 1,
+                                        "status": "error",
+                                        "record_id": None,
+                                        "detail": {"reason": f"HTTP {resp.status_code}: {reason}", "errors": []}
+                                    })
+
+                            except requests.ConnectionError:
                                 other_error_count += 1
                                 row_results.append({
                                     "row": idx + 1,
                                     "status": "error",
                                     "record_id": None,
-                                    "detail": {"reason": f"HTTP {resp.status_code}: {reason}", "errors": []}
+                                    "detail": {
+                                        "reason": f"Connection refused - is the API running at {api_url}?",
+                                        "errors": []
+                                    }
+                                })
+                            except requests.Timeout:
+                                other_error_count += 1
+                                row_results.append({
+                                    "row": idx + 1,
+                                    "status": "error",
+                                    "record_id": None,
+                                    "detail": {"reason": "Request timed out", "errors": []}
+                                })
+                            except Exception as e:
+                                other_error_count += 1
+                                row_results.append({
+                                    "row": idx + 1,
+                                    "status": "error",
+                                    "record_id": None,
+                                    "detail": {"reason": str(e), "errors": []}
                                 })
 
-                        except requests.ConnectionError:
-                            other_error_count += 1
-                            row_results.append({
-                                "row": idx + 1,
-                                "status": "error",
-                                "record_id": None,
-                                "detail": {
-                                    "reason": f"Connection refused - is the API running at {api_url}?",
-                                    "errors": []
-                                }
-                            })
-                        except requests.Timeout:
-                            other_error_count += 1
-                            row_results.append({
-                                "row": idx + 1,
-                                "status": "error",
-                                "record_id": None,
-                                "detail": {"reason": "Request timed out", "errors": []}
-                            })
-                        except Exception as e:
-                            other_error_count += 1
-                            row_results.append({
-                                "row": idx + 1,
-                                "status": "error",
-                                "record_id": None,
-                                "detail": {"reason": str(e), "errors": []}
-                            })
+                        progress.empty()
 
-                    progress.empty()
+                        # --- Summary ---
+                        st.divider()
+                        st.subheader("Results Summary")
+                        total = len(row_results)
+                        col1, col2, col3 = st.columns(3)
+                        col1.metric("Succeeded", saved_count)
+                        col2.metric("Validation Failed", validation_fail_count)
+                        col3.metric("Other Errors", other_error_count)
 
-                    # --- Summary ---
+                        if saved_count == total:
+                            st.success(f"All {total} records processed successfully!")
+                        elif saved_count > 0:
+                            st.warning(
+                                f"{saved_count} of {total} records succeeded. "
+                                f"{validation_fail_count} failed validation, "
+                                f"{other_error_count} had other errors."
+                            )
+                        else:
+                            st.error(f"No records succeeded out of {total}.")
+
+                        # --- Per-row details ---
+                        for result in row_results:
+                            row_num = result["row"]
+                            status = result["status"]
+
+                            if status == "success":
+                                st.write(f"Row {row_num}: Saved (ID: `{result['record_id']}`)")
+                            elif status == "validation_failed":
+                                with st.expander(f"Row {row_num}: Validation Failed"):
+                                    detail = result["detail"]
+                                    st.write(f"**Reason:** {detail['reason']}")
+                                    if detail["errors"]:
+                                        st.write("**Errors:**")
+                                        for err in detail["errors"]:
+                                            st.write(f"- {err}")
+                            elif status == "error":
+                                with st.expander(f"Row {row_num}: Error"):
+                                    detail = result["detail"]
+                                    st.write(f"**Reason:** {detail['reason']}")
+
+                    # --- Action Buttons ---
                     st.divider()
-                    st.subheader("Results Summary")
-                    total = len(row_results)
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("Succeeded", saved_count)
-                    col2.metric("Validation Failed", validation_fail_count)
-                    col3.metric("Other Errors", other_error_count)
+                    st.subheader("Save to Database")
+                    st.write(
+                        "Records will be validated against the full JSON Schema via the API "
+                        "and saved to the database if valid."
+                    )
 
-                    if saved_count == total:
-                        st.success(f"All {total} records processed successfully!")
-                    elif saved_count > 0:
-                        st.warning(
-                            f"{saved_count} of {total} records succeeded. "
-                            f"{validation_fail_count} failed validation, "
-                            f"{other_error_count} had other errors."
-                        )
-                    else:
-                        st.error(f"No records succeeded out of {total}.")
+                    btn_col1, btn_col2 = st.columns(2)
 
-                    # --- Per-row details ---
-                    for result in row_results:
-                        row_num = result["row"]
-                        status = result["status"]
+                    with btn_col1:
+                        if st.button("Save Records to Database", type="primary"):
+                            post_records_to_api("/portal/api/records", "Saving records")
 
-                        if status == "success":
-                            st.write(f"Row {row_num}: Saved (ID: `{result['record_id']}`)")
-                        elif status == "validation_failed":
-                            with st.expander(f"Row {row_num}: Validation Failed"):
-                                detail = result["detail"]
-                                st.write(f"**Reason:** {detail['reason']}")
-                                if detail["errors"]:
-                                    st.write("**Errors:**")
-                                    for err in detail["errors"]:
-                                        st.write(f"- {err}")
-                        elif status == "error":
-                            with st.expander(f"Row {row_num}: Error"):
-                                detail = result["detail"]
-                                st.write(f"**Reason:** {detail['reason']}")
+                    with btn_col2:
+                        if st.button("Validate Only"):
+                            post_records_to_api("/portal/api/validate", "Validating records")
 
-                # --- Action Buttons ---
-                st.divider()
-                st.subheader("Save to Database")
-                st.write(
-                    "Records will be validated against the full JSON Schema via the API "
-                    "and saved to the database if valid."
-                )
-
-                btn_col1, btn_col2 = st.columns(2)
-
-                with btn_col1:
-                    if st.button("Save Records to Database", type="primary"):
-                        post_records_to_api("/portal/api/records", "Saving records")
-
-                with btn_col2:
-                    if st.button("Validate Only"):
-                        post_records_to_api("/portal/api/validate", "Validating records")
-
-        except Exception as e:
-            st.error(f"Error reading file: {e}")
+            except Exception as e:
+                st.error(f"Error reading file: {e}")
 
 
 # =============================================================================
@@ -1040,16 +1127,38 @@ elif page == "API Documentation":
       "sample_form": "pellet"
     }
   }' ''', language="bash")
+    st.markdown("**Response fields:**")
+    st.markdown("""
+    | Field | Type | Description |
+    |---|---|---|
+    | `valid` | bool | `true` only if **both** schema and vocabulary pass |
+    | `schema_valid` | bool | JSON Schema validation result |
+    | `vocabulary_valid` | bool | Living-ontology vocabulary check result |
+    | `schema_errors` | list | Schema validation errors |
+    | `vocabulary_errors` | list | Vocabulary validation errors |
+    | `errors` | list | Combined list (schema + vocabulary) for backward compatibility |
+    """)
     st.markdown("**Responses:**")
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("*Valid:*")
-        st.code('{ "valid": true }', language="json")
+        st.code('''{ "valid": true,
+  "schema_valid": true,
+  "vocabulary_valid": true,
+  "schema_errors": [],
+  "vocabulary_errors": [],
+  "errors": [] }''', language="json")
     with col2:
-        st.markdown("*Invalid:*")
-        st.code('''{ "valid": false, "errors": [
-    { "path": "record_type", "message": "'bad' is not one of [...]" }
-  ]}''', language="json")
+        st.markdown("*Invalid vocabulary:*")
+        st.code('''{ "valid": false,
+  "schema_valid": true,
+  "vocabulary_valid": false,
+  "schema_errors": [],
+  "vocabulary_errors": [
+    { "path": "system.domain",
+      "message": "'empirical_wrong' is not in the vocabulary..." }
+  ],
+  "errors": [...] }''', language="json")
 
     st.divider()
 
@@ -1057,7 +1166,8 @@ elif page == "API Documentation":
     st.markdown("#### Create a Record (validate + write)")
     st.code("POST /portal/api/records", language="text")
     st.markdown("""
-    Validates the record and, **if valid**, persists it to the database.
+    Validates the record against **both** the JSON Schema and the living vocabulary,
+    and **if valid**, persists it to the database.
     This is the "write-if-valid" endpoint — invalid records are rejected without side effects.
     """)
     st.markdown("**Responses:**")
@@ -1069,6 +1179,8 @@ elif page == "API Documentation":
         st.markdown("*Validation failure (400):*")
         st.code('''{ "success": false,
   "reason": "validation_failed",
+  "schema_errors": [...],
+  "vocabulary_errors": [...],
   "errors": [...] }''', language="json")
 
     st.divider()

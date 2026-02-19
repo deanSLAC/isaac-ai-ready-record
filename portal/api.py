@@ -29,6 +29,7 @@ if str(_portal_dir) not in sys.path:
     sys.path.insert(0, str(_portal_dir))
 
 import database  # noqa: E402  (same import style as app.py)
+import ontology  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Flask app setup
@@ -127,6 +128,18 @@ def _validate_record(data: dict) -> list:
     return errors
 
 
+def _validate_vocabulary(data: dict) -> list:
+    """
+    Validate a record dict against the live ontology vocabulary.
+    Degrades gracefully: returns an empty list on any internal error.
+    """
+    try:
+        return ontology.validate_record_vocabulary(data)
+    except Exception as exc:
+        logger.warning("Vocabulary validation failed (degraded): %s", exc)
+        return []
+
+
 # ===========================================================================
 # Endpoints
 # ===========================================================================
@@ -157,10 +170,20 @@ def validate():
             "errors": [{"path": "(root)", "message": "Request body is not valid JSON"}],
         }), 400
 
-    errors = _validate_record(data)
-    if errors:
-        return jsonify({"valid": False, "errors": errors}), 200
-    return jsonify({"valid": True}), 200
+    schema_errors = _validate_record(data)
+    vocab_errors = _validate_vocabulary(data)
+    all_errors = schema_errors + vocab_errors
+    schema_valid = len(schema_errors) == 0
+    vocab_valid = len(vocab_errors) == 0
+
+    return jsonify({
+        "valid": schema_valid and vocab_valid,
+        "schema_valid": schema_valid,
+        "vocabulary_valid": vocab_valid,
+        "schema_errors": schema_errors,
+        "vocabulary_errors": vocab_errors,
+        "errors": all_errors,
+    }), 200
 
 
 # --- Create record ---------------------------------------------------------
@@ -182,11 +205,15 @@ def create_record():
         }), 400
 
     # Schema validation
-    errors = _validate_record(data)
+    schema_errors = _validate_record(data)
+    vocab_errors = _validate_vocabulary(data)
+    errors = schema_errors + vocab_errors
     if errors:
         return jsonify({
             "success": False,
             "reason": "validation_failed",
+            "schema_errors": schema_errors,
+            "vocabulary_errors": vocab_errors,
             "errors": errors,
         }), 400
 

@@ -628,3 +628,87 @@ def sync_file_to_db():
 
     save_vocabulary_cache(vocab, "file_sync")
     return True, f"Synced {sum(len(cats) for cats in vocab.values())} categories to database"
+
+
+# =============================================================================
+# Record Vocabulary Validation
+# =============================================================================
+
+# Category keys that are namespaces (not enum fields in the record)
+_SKIP_CATEGORIES = {"descriptors.theoretical_metric"}
+
+
+def _resolve_path(data, path_parts):
+    """
+    Walk *data* following *path_parts* (list of key strings).
+
+    When a value along the path is a list, iterate over every element and
+    continue walking the remaining keys inside each element.  This lets a
+    single dotted key like ``measurement.series.channels.role`` reach into
+    ``record["measurement"]["series"][*]["channels"][*]["role"]``.
+
+    Returns a list of ``(dotted_path_string, leaf_value)`` tuples for every
+    leaf reached.
+    """
+    if not path_parts:
+        return []
+
+    results = []
+
+    def _walk(obj, remaining, breadcrumb):
+        if not remaining:
+            # Reached the end — obj is the leaf value
+            results.append((".".join(breadcrumb), obj))
+            return
+
+        key = remaining[0]
+        rest = remaining[1:]
+
+        if isinstance(obj, dict):
+            if key in obj:
+                _walk(obj[key], rest, breadcrumb + [key])
+        elif isinstance(obj, list):
+            # Transparently iterate over array elements
+            for idx, item in enumerate(obj):
+                _walk(item, remaining, breadcrumb + [str(idx)])
+
+    _walk(data, list(path_parts), [])
+    return results
+
+
+def validate_record_vocabulary(record):
+    """
+    Validate *record* (a dict) against the live vocabulary.
+
+    Returns a list of error dicts ``[{"path": ..., "message": ...}]``.
+    An empty list means all vocabulary terms are valid.
+    """
+    vocab = load_vocabulary()
+    if not vocab:
+        return []  # No vocabulary loaded — skip validation
+
+    errors = []
+
+    for section_name, categories in vocab.items():
+        for cat_key, cat_data in categories.items():
+            if cat_key in _SKIP_CATEGORIES:
+                continue
+
+            allowed = cat_data.get("values", [])
+            if not allowed:
+                continue
+
+            path_parts = cat_key.split(".")
+            hits = _resolve_path(record, path_parts)
+
+            for dotted_path, value in hits:
+                if isinstance(value, str) and value not in allowed:
+                    errors.append({
+                        "path": dotted_path,
+                        "message": (
+                            f"'{value}' is not in the vocabulary for "
+                            f"{cat_key}. Allowed: {allowed}"
+                        ),
+                    })
+
+    return errors

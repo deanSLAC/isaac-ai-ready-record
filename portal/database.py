@@ -108,6 +108,51 @@ def init_tables():
             )
         ''')
 
+        # Cached vocabulary parsed from wiki
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS vocabulary_cache (
+                id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                section VARCHAR(100) NOT NULL,
+                category VARCHAR(255) NOT NULL,
+                description TEXT DEFAULT '',
+                terms JSONB NOT NULL DEFAULT '[]',
+                synced_at TIMESTAMPTZ DEFAULT NOW(),
+                wiki_page VARCHAR(100),
+                UNIQUE(section, category)
+            )
+        ''')
+
+        # Sync audit log
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS vocabulary_sync_log (
+                id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                synced_at TIMESTAMPTZ DEFAULT NOW(),
+                synced_by VARCHAR(255) DEFAULT 'system',
+                sections_count INT DEFAULT 0,
+                categories_count INT DEFAULT 0,
+                status VARCHAR(20) DEFAULT 'success',
+                error_message TEXT
+            )
+        ''')
+
+        # User proposals for vocabulary changes
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS vocabulary_proposals (
+                id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                proposal_type VARCHAR(30) NOT NULL,
+                section VARCHAR(100) NOT NULL,
+                category VARCHAR(255),
+                term VARCHAR(255),
+                description TEXT DEFAULT '',
+                proposed_by VARCHAR(255) NOT NULL,
+                proposed_at TIMESTAMPTZ DEFAULT NOW(),
+                status VARCHAR(20) DEFAULT 'pending',
+                reviewed_by VARCHAR(255),
+                reviewed_at TIMESTAMPTZ,
+                review_comment TEXT
+            )
+        ''')
+
         conn.commit()
         cur.close()
         conn.close()
@@ -465,6 +510,257 @@ def get_access_stats() -> dict:
             'total_visits': row['total_visits'],
             'last_access': row['last_access'],
         }
+    finally:
+        cur.close()
+        conn.close()
+
+
+# =============================================================================
+# Vocabulary Cache Operations
+# =============================================================================
+
+def save_vocabulary_cache(vocab: dict, synced_by: str = "system") -> bool:
+    """
+    Replace all vocabulary cache from parsed wiki data and log the sync.
+
+    Args:
+        vocab: dict matching vocabulary.json structure {section: {category: {description, values}}}
+        synced_by: username who triggered the sync
+
+    Returns:
+        True on success
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute('DELETE FROM vocabulary_cache')
+
+        sections_count = 0
+        categories_count = 0
+
+        for section, categories in vocab.items():
+            sections_count += 1
+            # Derive wiki_page from section name
+            wiki_page = section.replace(" ", "-") if section != "Record Info" else "Record-Overview"
+            for category, data in categories.items():
+                categories_count += 1
+                cur.execute('''
+                    INSERT INTO vocabulary_cache (section, category, description, terms, wiki_page)
+                    VALUES (%s, %s, %s, %s, %s)
+                ''', (
+                    section,
+                    category,
+                    data.get('description', ''),
+                    json.dumps(data.get('values', [])),
+                    wiki_page
+                ))
+
+        # Log the sync
+        cur.execute('''
+            INSERT INTO vocabulary_sync_log (synced_by, sections_count, categories_count, status)
+            VALUES (%s, %s, %s, 'success')
+        ''', (synced_by, sections_count, categories_count))
+
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        # Log failed sync
+        try:
+            cur.execute('''
+                INSERT INTO vocabulary_sync_log (synced_by, status, error_message)
+                VALUES (%s, 'error', %s)
+            ''', (synced_by, str(e)))
+            conn.commit()
+        except Exception:
+            pass
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+def load_vocabulary_cache() -> dict:
+    """
+    Load vocabulary from the cache table.
+
+    Returns:
+        dict matching vocabulary.json structure, or empty dict if no cache
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute('SELECT section, category, description, terms FROM vocabulary_cache ORDER BY section, category')
+        rows = cur.fetchall()
+
+        if not rows:
+            return {}
+
+        vocab = {}
+        for row in rows:
+            section = row['section']
+            category = row['category']
+            if section not in vocab:
+                vocab[section] = {}
+            vocab[section][category] = {
+                'description': row['description'] or '',
+                'values': row['terms'] if isinstance(row['terms'], list) else json.loads(row['terms'])
+            }
+        return vocab
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_last_sync() -> dict:
+    """
+    Get the most recent sync log entry.
+
+    Returns:
+        dict with sync info or None if never synced
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute('''
+            SELECT synced_at, synced_by, sections_count, categories_count, status, error_message
+            FROM vocabulary_sync_log
+            ORDER BY synced_at DESC
+            LIMIT 1
+        ''')
+        row = cur.fetchone()
+        if not row:
+            return None
+        return dict(row)
+    finally:
+        cur.close()
+        conn.close()
+
+
+# =============================================================================
+# Vocabulary Proposal Operations
+# =============================================================================
+
+def create_proposal(proposal_type: str, section: str, category: str = None,
+                    term: str = None, description: str = "", proposed_by: str = "anonymous") -> int:
+    """
+    Create a vocabulary change proposal.
+
+    Args:
+        proposal_type: 'add_term' or 'add_category'
+        section: target section
+        category: target category (required for add_term, new name for add_category)
+        term: new term (for add_term)
+        description: description text
+        proposed_by: username
+
+    Returns:
+        The proposal ID
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute('''
+            INSERT INTO vocabulary_proposals (proposal_type, section, category, term, description, proposed_by)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+        ''', (proposal_type, section, category, term, description, proposed_by))
+
+        proposal_id = cur.fetchone()['id']
+        conn.commit()
+        return proposal_id
+    finally:
+        cur.close()
+        conn.close()
+
+
+def list_proposals(status: str = None, proposed_by: str = None) -> list:
+    """
+    List vocabulary proposals with optional filters.
+
+    Args:
+        status: filter by status ('pending', 'approved', 'rejected') or None for all
+        proposed_by: filter by proposer username or None for all
+
+    Returns:
+        List of proposal dicts
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        query = 'SELECT * FROM vocabulary_proposals WHERE 1=1'
+        params = []
+
+        if status:
+            query += ' AND status = %s'
+            params.append(status)
+        if proposed_by:
+            query += ' AND proposed_by = %s'
+            params.append(proposed_by)
+
+        query += ' ORDER BY proposed_at DESC'
+        cur.execute(query, params)
+
+        rows = cur.fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        cur.close()
+        conn.close()
+
+
+def review_proposal(proposal_id: int, status: str, reviewed_by: str, comment: str = "") -> tuple:
+    """
+    Approve or reject a proposal.
+
+    Args:
+        proposal_id: the proposal to review
+        status: 'approved' or 'rejected'
+        reviewed_by: admin username
+        comment: optional review comment
+
+    Returns:
+        (success: bool, message: str)
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute('SELECT * FROM vocabulary_proposals WHERE id = %s', (proposal_id,))
+        proposal = cur.fetchone()
+
+        if not proposal:
+            return False, "Proposal not found."
+
+        if proposal['status'] != 'pending':
+            return False, f"Proposal already {proposal['status']}."
+
+        cur.execute('''
+            UPDATE vocabulary_proposals
+            SET status = %s, reviewed_by = %s, reviewed_at = NOW(), review_comment = %s
+            WHERE id = %s
+        ''', (status, reviewed_by, comment, proposal_id))
+
+        conn.commit()
+        return True, f"Proposal {status}."
+    finally:
+        cur.close()
+        conn.close()
+
+
+def count_pending_proposals() -> int:
+    """Return the count of pending vocabulary proposals."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("SELECT COUNT(*) as count FROM vocabulary_proposals WHERE status = 'pending'")
+        row = cur.fetchone()
+        return row['count']
     finally:
         cur.close()
         conn.close()

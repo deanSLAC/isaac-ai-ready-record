@@ -8,7 +8,7 @@ WORKDIR /app
 RUN useradd --create-home --shell /bin/bash appuser
 
 # Install curl for health checks
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y curl git && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies first (for better caching)
 COPY requirements.txt .

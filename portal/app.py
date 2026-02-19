@@ -7,7 +7,7 @@ import database
 import os
 import importlib
 import streamlit.components.v1 as components
-from datetime import datetime
+from datetime import datetime, timezone
 
 importlib.reload(ontology)
 
@@ -29,17 +29,37 @@ if database.is_db_configured():
 # Check database status
 db_connected = database.test_db_connection()
 
+# Extract current user from Authentik headers
+try:
+    _headers = st.context.headers
+    current_username = _headers.get("X-authentik-username", "anonymous")
+except Exception:
+    current_username = "anonymous"
+
+user_is_admin = ontology.is_admin(current_username)
+
 # Log portal access (once per session)
 if "access_logged" not in st.session_state:
     st.session_state.access_logged = True
     if db_connected:
         try:
-            headers = st.context.headers
-            username = headers.get("X-authentik-username", "anonymous")
+            database.log_access(current_username)
         except Exception:
-            username = "anonymous"
+            pass
+
+# Auto-sync from wiki on first load if cache is stale (>1 hour)
+if "wiki_sync_checked" not in st.session_state:
+    st.session_state.wiki_sync_checked = True
+    if db_connected and os.environ.get("WIKI_REPO_URL"):
         try:
-            database.log_access(username)
+            last_sync = database.get_last_sync()
+            need_sync = True
+            if last_sync and last_sync.get('synced_at'):
+                age = datetime.now(timezone.utc) - last_sync['synced_at']
+                if age.total_seconds() < 3600:
+                    need_sync = False
+            if need_sync:
+                ontology.sync_from_wiki(synced_by="auto")
         except Exception:
             pass
 
@@ -48,13 +68,25 @@ if "current_page" not in st.session_state:
     st.session_state.current_page = "Dashboard"
 
 PAGES = ["Dashboard", "Ontology Editor", "Record Form", "Record Validator", "Saved Records", "API Documentation", "About"]
+if user_is_admin:
+    # Insert Admin Review after Ontology Editor
+    PAGES.insert(2, "Admin Review")
 
 # --- Top navigation bar: hamburger menu + DB status ---
 nav_col, status_col = st.columns([6, 1])
 with nav_col:
     with st.popover("☰ Menu"):
         for p in PAGES:
-            if st.button(p, key=f"nav_{p}", use_container_width=True,
+            label = p
+            # Show pending count badge for Admin Review
+            if p == "Admin Review" and db_connected:
+                try:
+                    pending = database.count_pending_proposals()
+                    if pending > 0:
+                        label = f"{p} ({pending})"
+                except Exception:
+                    pass
+            if st.button(label, key=f"nav_{p}", use_container_width=True,
                          type="primary" if p == st.session_state.current_page else "secondary"):
                 st.session_state.current_page = p
                 st.rerun()
@@ -82,7 +114,7 @@ def get_display_name(key):
     return DISPLAY_MAP.get(key, key)
 
 # --- CONFIG: Wiki Mapping ---
-WIKI_BASE = "https://github.com/dimosthenisSLAC/isaac-ai-ready-record/wiki"
+WIKI_BASE = "https://github.com/deanSLAC/isaac-ai-ready-record/wiki"
 
 WIKI_MAP = {
     "Record Info": "Record-Overview",
@@ -304,7 +336,7 @@ if page == "Dashboard":
 # =============================================================================
 elif page == "Ontology Editor":
     st.header("Living Ontology")
-    st.info("Navigate via the dropdowns on the left. The Visual Map updates to show context.")
+    st.info("Browse the ISAAC vocabulary below. Use the Propose form to suggest changes.")
 
     sections = ontology.get_sections()
 
@@ -312,8 +344,33 @@ elif page == "Ontology Editor":
 
     # -- LEFT: Controls --
     with col_nav:
-        st.subheader("1. Navigation")
-        # Use Display Names in Selectbox
+        # Admin toolbar
+        if user_is_admin:
+            with st.container():
+                admin_cols = st.columns([2, 1])
+                with admin_cols[0]:
+                    if db_connected:
+                        last_sync = None
+                        try:
+                            last_sync = database.get_last_sync()
+                        except Exception:
+                            pass
+                        if last_sync and last_sync.get('synced_at'):
+                            st.caption(f"Last sync: {last_sync['synced_at'].strftime('%Y-%m-%d %H:%M')} by {last_sync.get('synced_by', '?')}")
+                        else:
+                            st.caption("Never synced from wiki")
+                with admin_cols[1]:
+                    if st.button("Sync from Wiki", type="secondary"):
+                        with st.spinner("Syncing from wiki..."):
+                            ok, msg = ontology.sync_from_wiki(synced_by=current_username)
+                        if ok:
+                            st.success(msg)
+                            st.rerun()
+                        else:
+                            st.error(msg)
+                st.divider()
+
+        st.subheader("1. Browse")
         selected_section = st.selectbox("Select Schema Section", sections, format_func=get_display_name)
 
         categories_dict = ontology.get_categories(selected_section)
@@ -325,49 +382,168 @@ elif page == "Ontology Editor":
             selected_category = None
             st.warning("No categories found.")
 
-        # Add Category
-        with st.expander("Add New Category"):
-            new_cat = st.text_input("New Key (e.g. context.transport.viscosity)")
-            new_desc = st.text_input("Description")
-            if st.button("Create Category"):
-                success, msg = ontology.add_category(selected_section, new_cat, new_desc)
-                if success:
-                    st.success(msg)
-                    st.rerun()
-                else:
-                    st.error(msg)
+        st.divider()
+
+        if selected_category and selected_category in categories_dict:
+            st.subheader(f"2. Details: {selected_category}")
+            st.write(f"*{categories_dict[selected_category]['description']}*")
+            values = categories_dict[selected_category]['values']
+            df_vals = pd.DataFrame(values, columns=["Allowed Terms"])
+            st.dataframe(df_vals, use_container_width=True, height=200)
 
         st.divider()
 
-        if selected_category:
-            st.subheader(f"2. Edit: {selected_category}")
-            if selected_category in categories_dict:
-                 st.write(f"*{categories_dict[selected_category]['description']}*")
-                 values = categories_dict[selected_category]['values']
-                 df_vals = pd.DataFrame(values, columns=["Allowed Terms"])
-                 st.dataframe(df_vals, width='stretch', height=200)
+        # Propose changes (all users)
+        st.subheader("3. Propose a Change")
+        proposal_type = st.selectbox("Proposal Type", ["Add Term", "Add Category"], key="prop_type")
 
-            # Add Term
-            col_in, col_btn = st.columns([3, 1])
-            with col_in:
-                new_term = st.text_input("New Term", label_visibility="collapsed", placeholder="new_term")
-            with col_btn:
-                if st.button("Add"):
-                    if new_term:
-                        success, msg = ontology.add_term(selected_section, selected_category, new_term)
-                        if success:
-                            st.success(msg)
-                            st.rerun()
-                        else:
-                            st.warning(msg)
+        if proposal_type == "Add Term":
+            prop_section = st.selectbox("Section", sections, index=sections.index(selected_section) if selected_section in sections else 0, key="prop_sec_term")
+            prop_cats = list(ontology.get_categories(prop_section).keys())
+            prop_category = st.selectbox("Category", prop_cats, key="prop_cat_term") if prop_cats else None
+            prop_term = st.text_input("New Term", placeholder="e.g. rotating_cylinder", key="prop_term_input")
+            if st.button("Submit Proposal", key="submit_add_term"):
+                if prop_term and prop_category and db_connected:
+                    try:
+                        pid = database.create_proposal(
+                            proposal_type="add_term",
+                            section=prop_section,
+                            category=prop_category,
+                            term=prop_term,
+                            proposed_by=current_username
+                        )
+                        st.success(f"Proposal #{pid} submitted! An admin will review it.")
+                    except Exception as e:
+                        st.error(f"Failed to submit: {e}")
+                elif not db_connected:
+                    st.warning("Database not connected. Proposals require a database.")
+                else:
+                    st.warning("Please fill in all fields.")
 
-    # -- RIGHT: Pedagogic Map --
+        elif proposal_type == "Add Category":
+            prop_section = st.selectbox("Section", sections, index=sections.index(selected_section) if selected_section in sections else 0, key="prop_sec_cat")
+            prop_new_cat = st.text_input("New Category Key", placeholder="e.g. context.transport.viscosity", key="prop_cat_key")
+            prop_desc = st.text_input("Description", key="prop_cat_desc")
+            if st.button("Submit Proposal", key="submit_add_cat"):
+                if prop_new_cat and db_connected:
+                    try:
+                        pid = database.create_proposal(
+                            proposal_type="add_category",
+                            section=prop_section,
+                            category=prop_new_cat,
+                            description=prop_desc,
+                            proposed_by=current_username
+                        )
+                        st.success(f"Proposal #{pid} submitted! An admin will review it.")
+                    except Exception as e:
+                        st.error(f"Failed to submit: {e}")
+                elif not db_connected:
+                    st.warning("Database not connected. Proposals require a database.")
+                else:
+                    st.warning("Please provide a category key.")
+
+        # My Proposals
+        if db_connected:
+            with st.expander("My Proposals"):
+                try:
+                    my_proposals = database.list_proposals(proposed_by=current_username)
+                    if my_proposals:
+                        for prop in my_proposals:
+                            status_icon = {"pending": "...", "approved": "+", "rejected": "x"}.get(prop['status'], "?")
+                            label = f"[{status_icon}] #{prop['id']} {prop['proposal_type']}: {prop.get('category', '')} {prop.get('term', '') or ''}"
+                            st.write(label)
+                            if prop.get('review_comment'):
+                                st.caption(f"  Review: {prop['review_comment']}")
+                    else:
+                        st.write("No proposals yet.")
+                except Exception as e:
+                    st.error(f"Error loading proposals: {e}")
+
+    # -- RIGHT: Concept Map --
     with col_map:
         st.subheader("Concept Map")
         st.caption("Visualizing: " + get_display_name(selected_section))
 
         mermaid_code = generate_mermaid_code(selected_section, selected_category)
         render_mermaid(mermaid_code, height=600)
+
+
+# =============================================================================
+# PAGE: Admin Review (admin-only)
+# =============================================================================
+elif page == "Admin Review":
+    if not user_is_admin:
+        st.error("Access denied. Admin privileges required.")
+    elif not db_connected:
+        st.warning("Database not connected. Admin review requires a database.")
+    else:
+        st.header("Vocabulary Proposal Review")
+
+        tab_pending, tab_approved, tab_rejected = st.tabs(["Pending", "Approved", "Rejected"])
+
+        with tab_pending:
+            pending = database.list_proposals(status="pending")
+            if not pending:
+                st.info("No pending proposals.")
+            for prop in pending:
+                with st.container(border=True):
+                    st.markdown(f"**Proposal #{prop['id']}** — `{prop['proposal_type']}`")
+                    st.write(f"**Section:** {prop['section']}")
+                    if prop.get('category'):
+                        st.write(f"**Category:** {prop['category']}")
+                    if prop.get('term'):
+                        st.write(f"**Term:** {prop['term']}")
+                    if prop.get('description'):
+                        st.write(f"**Description:** {prop['description']}")
+                    st.caption(f"Proposed by {prop['proposed_by']} on {prop['proposed_at'].strftime('%Y-%m-%d %H:%M') if prop.get('proposed_at') else '?'}")
+
+                    comment = st.text_input("Comment (optional)", key=f"review_comment_{prop['id']}")
+                    btn_cols = st.columns(2)
+                    with btn_cols[0]:
+                        if st.button("Approve", key=f"approve_{prop['id']}", type="primary"):
+                            ok, msg = database.review_proposal(prop['id'], "approved", current_username, comment)
+                            if ok:
+                                # Apply the approved proposal (update cache + push to wiki)
+                                apply_ok, apply_msg, wiki_ok = ontology.apply_approved_proposal(prop)
+                                if apply_ok:
+                                    st.success(f"Approved and applied. {apply_msg}")
+                                    if not wiki_ok:
+                                        st.warning(f"Wiki push issue: {apply_msg}")
+                                else:
+                                    st.warning(f"Approved but failed to apply: {apply_msg}")
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                    with btn_cols[1]:
+                        if st.button("Reject", key=f"reject_{prop['id']}"):
+                            ok, msg = database.review_proposal(prop['id'], "rejected", current_username, comment)
+                            if ok:
+                                st.success("Proposal rejected.")
+                                st.rerun()
+                            else:
+                                st.error(msg)
+
+        with tab_approved:
+            approved = database.list_proposals(status="approved")
+            if not approved:
+                st.info("No approved proposals.")
+            for prop in approved:
+                with st.container(border=True):
+                    st.markdown(f"**#{prop['id']}** `{prop['proposal_type']}` — {prop.get('category', '')} {prop.get('term', '') or ''}")
+                    st.caption(f"By {prop['proposed_by']} | Approved by {prop.get('reviewed_by', '?')} on {prop['reviewed_at'].strftime('%Y-%m-%d %H:%M') if prop.get('reviewed_at') else '?'}")
+                    if prop.get('review_comment'):
+                        st.write(f"Comment: {prop['review_comment']}")
+
+        with tab_rejected:
+            rejected = database.list_proposals(status="rejected")
+            if not rejected:
+                st.info("No rejected proposals.")
+            for prop in rejected:
+                with st.container(border=True):
+                    st.markdown(f"**#{prop['id']}** `{prop['proposal_type']}` — {prop.get('category', '')} {prop.get('term', '') or ''}")
+                    st.caption(f"By {prop['proposed_by']} | Rejected by {prop.get('reviewed_by', '?')} on {prop['reviewed_at'].strftime('%Y-%m-%d %H:%M') if prop.get('reviewed_at') else '?'}")
+                    if prop.get('review_comment'):
+                        st.write(f"Comment: {prop['review_comment']}")
 
 
 # =============================================================================

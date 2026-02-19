@@ -1,20 +1,48 @@
 """
 ISAAC AI-Ready Record - Ontology/Vocabulary Module
-Supports both file-based (local dev) and PostgreSQL (production) storage
+Wiki-sourced living ontology with proposal/approval workflow.
+
+Data flow:
+  Wiki (source of truth) → sync_from_wiki() → vocabulary_cache table → load_vocabulary()
+  Proposals: user submits → admin approves → apply_approved_proposal() → cache + wiki push
+  Fallback: vocabulary_cache → vocabulary.json (file)
 """
 
 import json
 import os
+import re
+import tempfile
+import shutil
 
-# Path to vocabulary file in data/ directory
+import yaml
+import git
+
+# Path to vocabulary file in data/ directory (fallback)
 VOCAB_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "vocabulary.json")
 
 # Database imports (optional, for PostgreSQL support)
 try:
-    from database import get_db_connection, is_db_configured, test_db_connection
+    from database import (
+        get_db_connection, is_db_configured, test_db_connection,
+        save_vocabulary_cache, load_vocabulary_cache, get_last_sync,
+    )
     DB_AVAILABLE = True
 except ImportError:
     DB_AVAILABLE = False
+
+# Wiki page → section name mapping
+WIKI_PAGE_TO_SECTION = {
+    "Record-Overview": "Record Info",
+    "Sample": "Sample",
+    "Context": "Context",
+    "System": "System",
+    "Measurement": "Measurement",
+    "Assets": "Assets",
+    "Links": "Links",
+    "Descriptors": "Descriptors",
+}
+
+SECTION_TO_WIKI_PAGE = {v: k for k, v in WIKI_PAGE_TO_SECTION.items()}
 
 
 def _use_database():
@@ -24,6 +52,15 @@ def _use_database():
     if not is_db_configured():
         return False
     return test_db_connection()
+
+
+def is_admin(username: str) -> bool:
+    """Check if a username is in the ISAAC_ADMINS list."""
+    admins_str = os.environ.get("ISAAC_ADMINS", "")
+    if not admins_str:
+        return False
+    admins = [a.strip().lower() for a in admins_str.split(",") if a.strip()]
+    return username.lower() in admins
 
 
 # =============================================================================
@@ -38,136 +75,272 @@ def _load_vocabulary_from_file():
         return json.load(f)
 
 
-def _save_vocabulary_to_file(vocab):
-    """Saves the vocabulary to JSON."""
-    with open(VOCAB_FILE, 'w') as f:
-        json.dump(vocab, f, indent=4)
+# =============================================================================
+# Wiki Sync Operations
+# =============================================================================
+
+def _get_wiki_url():
+    """Get the wiki repo URL, optionally injecting GITHUB_TOKEN for auth."""
+    url = os.environ.get("WIKI_REPO_URL", "")
+    if not url:
+        return None
+
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if token and "github.com" in url and "@" not in url:
+        # Inject token: https://github.com/... → https://<token>@github.com/...
+        url = url.replace("https://github.com/", f"https://{token}@github.com/")
+    return url
+
+
+def _clone_or_pull_wiki(target_dir: str):
+    """Clone or pull the wiki repo into target_dir using GitPython."""
+    url = _get_wiki_url()
+    if not url:
+        raise ValueError("WIKI_REPO_URL not configured")
+
+    repo_path = os.path.join(target_dir, "wiki")
+
+    if os.path.exists(os.path.join(repo_path, ".git")):
+        repo = git.Repo(repo_path)
+        repo.remotes.origin.pull()
+    else:
+        git.Repo.clone_from(url, repo_path)
+
+    return repo_path
+
+
+def _parse_yaml_from_markdown(md_content: str) -> dict:
+    """
+    Extract vocabulary YAML from a markdown file's ## Controlled Vocabulary section.
+
+    Looks for a pattern like:
+        ## Controlled Vocabulary
+        ```yaml
+        key:
+          description: "..."
+          values: [...]
+        ```
+
+    Returns:
+        Parsed dict from the YAML block, or empty dict if not found/parse error.
+    """
+    # Match the ## Controlled Vocabulary section followed by a yaml code block
+    pattern = r'##\s*Controlled\s+Vocabulary\s*\n+```yaml\s*\n(.*?)```'
+    match = re.search(pattern, md_content, re.DOTALL | re.IGNORECASE)
+
+    if not match:
+        return {}
+
+    yaml_text = match.group(1)
+    try:
+        parsed = yaml.safe_load(yaml_text)
+        if isinstance(parsed, dict):
+            return parsed
+        return {}
+    except yaml.YAMLError:
+        return {}
+
+
+def sync_from_wiki(synced_by: str = "system") -> tuple:
+    """
+    Clone/pull the wiki, parse each page's Controlled Vocabulary YAML,
+    and save to the vocabulary_cache table.
+
+    Returns:
+        (success: bool, message: str)
+    """
+    if not _use_database():
+        return False, "Database not available"
+
+    tmp_dir = tempfile.mkdtemp(prefix="isaac_wiki_")
+    try:
+        repo_path = _clone_or_pull_wiki(tmp_dir)
+
+        vocab = {}
+        parsed_pages = 0
+        skipped_pages = []
+
+        for wiki_page, section_name in WIKI_PAGE_TO_SECTION.items():
+            md_file = os.path.join(repo_path, f"{wiki_page}.md")
+            if not os.path.exists(md_file):
+                skipped_pages.append(wiki_page)
+                continue
+
+            with open(md_file, 'r') as f:
+                content = f.read()
+
+            page_vocab = _parse_yaml_from_markdown(content)
+            if page_vocab:
+                vocab[section_name] = {}
+                for key, data in page_vocab.items():
+                    if isinstance(data, dict):
+                        vocab[section_name][key] = {
+                            'description': data.get('description', ''),
+                            'values': data.get('values', [])
+                        }
+                parsed_pages += 1
+            else:
+                skipped_pages.append(wiki_page)
+
+        if not vocab:
+            return False, "No vocabulary data found in wiki pages"
+
+        save_vocabulary_cache(vocab, synced_by)
+
+        msg = f"Synced {parsed_pages} pages, {sum(len(cats) for cats in vocab.values())} categories"
+        if skipped_pages:
+            msg += f" (skipped: {', '.join(skipped_pages)})"
+        return True, msg
+
+    except Exception as e:
+        return False, f"Wiki sync failed: {e}"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _regenerate_yaml_block(vocab_for_section: dict) -> str:
+    """Generate the YAML code block string for a section's vocabulary."""
+    lines = []
+    for key, data in sorted(vocab_for_section.items()):
+        lines.append(f'{key}:')
+        lines.append(f'  description: "{data.get("description", "")}"')
+        values = data.get('values', [])
+        values_str = ", ".join(values)
+        lines.append(f'  values: [{values_str}]')
+    return "\n".join(lines)
+
+
+def push_change_to_wiki(section: str, vocab_for_section: dict) -> tuple:
+    """
+    Clone the wiki, update the YAML block for the given section, commit & push.
+
+    Returns:
+        (success: bool, message: str)
+    """
+    wiki_page = SECTION_TO_WIKI_PAGE.get(section)
+    if not wiki_page:
+        return False, f"No wiki page mapping for section '{section}'"
+
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        return False, "GITHUB_TOKEN not configured — cannot push to wiki"
+
+    tmp_dir = tempfile.mkdtemp(prefix="isaac_wiki_push_")
+    try:
+        repo_path = _clone_or_pull_wiki(tmp_dir)
+        md_file = os.path.join(repo_path, f"{wiki_page}.md")
+
+        if not os.path.exists(md_file):
+            return False, f"Wiki page {wiki_page}.md not found"
+
+        with open(md_file, 'r') as f:
+            content = f.read()
+
+        new_yaml = _regenerate_yaml_block(vocab_for_section)
+        new_block = f"## Controlled Vocabulary\n\n```yaml\n{new_yaml}\n```"
+
+        # Replace existing block or append
+        pattern = r'##\s*Controlled\s+Vocabulary\s*\n+```yaml\s*\n.*?```'
+        if re.search(pattern, content, re.DOTALL | re.IGNORECASE):
+            new_content = re.sub(pattern, new_block, content, flags=re.DOTALL | re.IGNORECASE)
+        else:
+            new_content = content.rstrip() + "\n\n" + new_block + "\n"
+
+        with open(md_file, 'w') as f:
+            f.write(new_content)
+
+        # Commit and push
+        repo = git.Repo(repo_path)
+        repo.index.add([f"{wiki_page}.md"])
+
+        if repo.is_dirty() or repo.untracked_files:
+            repo.index.commit(f"Update vocabulary for {section} (ISAAC Portal)")
+            repo.remotes.origin.push()
+            return True, f"Pushed vocabulary update for {section} to wiki"
+        else:
+            return True, "No changes to push"
+
+    except Exception as e:
+        return False, f"Wiki push failed: {e}"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def apply_approved_proposal(proposal: dict) -> tuple:
+    """
+    Apply an approved proposal: update DB cache and push to wiki.
+
+    Args:
+        proposal: dict with proposal_type, section, category, term, description
+
+    Returns:
+        (success: bool, message: str, wiki_push_ok: bool)
+    """
+    vocab = load_vocabulary()
+
+    section = proposal['section']
+    proposal_type = proposal['proposal_type']
+
+    if section not in vocab:
+        vocab[section] = {}
+
+    if proposal_type == 'add_term':
+        category = proposal['category']
+        term = proposal['term']
+        if category not in vocab[section]:
+            return False, f"Category '{category}' not found in '{section}'", False
+        if term in vocab[section][category]['values']:
+            return False, f"Term '{term}' already exists", False
+        vocab[section][category]['values'].append(term)
+
+    elif proposal_type == 'add_category':
+        category = proposal['category']
+        description = proposal.get('description', '')
+        if category in vocab[section]:
+            return False, f"Category '{category}' already exists", False
+        vocab[section][category] = {'description': description, 'values': []}
+
+    else:
+        return False, f"Unknown proposal type: {proposal_type}", False
+
+    # Update DB cache
+    if _use_database():
+        try:
+            save_vocabulary_cache(vocab, proposal.get('reviewed_by', 'system'))
+        except Exception as e:
+            return False, f"Failed to update cache: {e}", False
+
+    # Push to wiki
+    wiki_push_ok = True
+    wiki_msg = ""
+    try:
+        ok, wiki_msg = push_change_to_wiki(section, vocab[section])
+        wiki_push_ok = ok
+    except Exception as e:
+        wiki_push_ok = False
+        wiki_msg = str(e)
+
+    msg = f"Applied proposal: {proposal_type}"
+    if not wiki_push_ok:
+        msg += f" (wiki push warning: {wiki_msg})"
+
+    return True, msg, wiki_push_ok
 
 
 # =============================================================================
-# PostgreSQL operations (production)
-# =============================================================================
-
-def _load_vocabulary_from_db():
-    """Loads vocabulary from PostgreSQL database."""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute('SELECT section, category, description, terms FROM vocabulary ORDER BY section, category')
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    # Convert flat rows to nested structure matching file format
-    vocab = {}
-    for row in rows:
-        section = row['section']
-        category = row['category']
-        if section not in vocab:
-            vocab[section] = {}
-        vocab[section][category] = {
-            'description': row['description'] or '',
-            'values': row['terms'] if isinstance(row['terms'], list) else json.loads(row['terms'])
-        }
-    return vocab
-
-
-def _save_vocabulary_to_db(vocab):
-    """Saves entire vocabulary to PostgreSQL database."""
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    # Clear existing and re-insert (simple approach for full save)
-    cur.execute('DELETE FROM vocabulary')
-
-    for section, categories in vocab.items():
-        for category, data in categories.items():
-            cur.execute('''
-                INSERT INTO vocabulary (section, category, description, terms)
-                VALUES (%s, %s, %s, %s)
-            ''', (section, category, data.get('description', ''), json.dumps(data.get('values', []))))
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-
-def _add_term_to_db(section, category, term):
-    """Adds a term to a category in the database."""
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    # Get current terms
-    cur.execute('SELECT terms FROM vocabulary WHERE section = %s AND category = %s', (section, category))
-    row = cur.fetchone()
-
-    if not row:
-        cur.close()
-        conn.close()
-        return False, f"Category '{category}' not found in '{section}'."
-
-    terms = row['terms'] if isinstance(row['terms'], list) else json.loads(row['terms'])
-
-    if term in terms:
-        cur.close()
-        conn.close()
-        return False, f"'{term}' already exists in '{category}'."
-
-    terms.append(term)
-    cur.execute('UPDATE vocabulary SET terms = %s WHERE section = %s AND category = %s',
-                (json.dumps(terms), section, category))
-    conn.commit()
-    cur.close()
-    conn.close()
-    return True, f"Added '{term}' to '{category}'."
-
-
-def _add_category_to_db(section, category, description=""):
-    """Adds a new category to a section in the database."""
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    # Check if category exists
-    cur.execute('SELECT 1 FROM vocabulary WHERE section = %s AND category = %s', (section, category))
-    if cur.fetchone():
-        cur.close()
-        conn.close()
-        return False, "Category already exists."
-
-    cur.execute('''
-        INSERT INTO vocabulary (section, category, description, terms)
-        VALUES (%s, %s, %s, %s)
-    ''', (section, category, description, json.dumps([])))
-    conn.commit()
-    cur.close()
-    conn.close()
-    return True, f"Created category '{category}' in '{section}'."
-
-
-# =============================================================================
-# Public API - automatically selects file or database backend
+# Public API
 # =============================================================================
 
 def load_vocabulary():
-    """Loads the vocabulary from database or file."""
+    """Loads the vocabulary from DB cache, falling back to file."""
     if _use_database():
         try:
-            return _load_vocabulary_from_db()
+            cached = load_vocabulary_cache()
+            if cached:
+                return cached
         except Exception:
-            # Fall back to file on database error
             pass
     return _load_vocabulary_from_file()
-
-
-def save_vocabulary(vocab):
-    """Saves the vocabulary to database or file."""
-    if _use_database():
-        try:
-            _save_vocabulary_to_db(vocab)
-            return
-        except Exception:
-            # Fall back to file on database error
-            pass
-    _save_vocabulary_to_file(vocab)
 
 
 def get_sections():
@@ -185,44 +358,13 @@ def get_categories(section):
 
 
 def add_term(section, category, term):
-    """Adds a new term to a category within a section."""
-    if _use_database():
-        try:
-            return _add_term_to_db(section, category, term)
-        except Exception:
-            pass
-
-    # File-based fallback
-    vocab = load_vocabulary()
-    if section in vocab and category in vocab[section]:
-        if term not in vocab[section][category]['values']:
-            vocab[section][category]['values'].append(term)
-            save_vocabulary(vocab)
-            return True, f"Added '{term}' to '{category}'."
-        else:
-            return False, f"'{term}' already exists in '{category}'."
-    else:
-        return False, f"Category '{category}' not found in '{section}'."
+    """Deprecated — returns message directing to proposal workflow."""
+    return False, "Direct edits are disabled. Please use the Propose form to suggest changes."
 
 
 def add_category(section, category, description=""):
-    """Adds a new category to a section."""
-    if _use_database():
-        try:
-            return _add_category_to_db(section, category, description)
-        except Exception:
-            pass
-
-    # File-based fallback
-    vocab = load_vocabulary()
-    if section not in vocab:
-         vocab[section] = {}
-
-    if category not in vocab[section]:
-        vocab[section][category] = {"description": description, "values": []}
-        save_vocabulary(vocab)
-        return True, f"Created category '{category}' in '{section}'."
-    return False, "Category already exists."
+    """Deprecated — returns message directing to proposal workflow."""
+    return False, "Direct edits are disabled. Please use the Propose form to suggest changes."
 
 
 def sync_file_to_db():
@@ -234,5 +376,5 @@ def sync_file_to_db():
     if not vocab:
         return False, "No vocabulary file found"
 
-    _save_vocabulary_to_db(vocab)
+    save_vocabulary_cache(vocab, "file_sync")
     return True, f"Synced {sum(len(cats) for cats in vocab.values())} categories to database"

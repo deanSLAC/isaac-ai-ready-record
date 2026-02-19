@@ -34,6 +34,36 @@ def get_vocab_values(section: str, category: str) -> list:
     return []
 
 
+def render_extra_vocab_fields(section: str, handled_categories: list, prefix: str) -> dict:
+    """
+    Render selectboxes for any vocabulary categories in a section
+    that aren't already handled by the hardcoded form fields.
+
+    Returns dict of {category_key: selected_value} for categories rendered.
+    """
+    vocab = ontology.load_vocabulary()
+    extra = {}
+    if section not in vocab:
+        return extra
+    for cat_key, cat_data in vocab[section].items():
+        if cat_key in handled_categories:
+            continue
+        values = cat_data.get('values', [])
+        if not values:
+            continue
+        desc = cat_data.get('description', '')
+        options = [""] + values
+        selected = st.selectbox(
+            cat_key,
+            options,
+            help=desc,
+            key=f"{prefix}_{cat_key}"
+        )
+        if selected:
+            extra[cat_key] = selected
+    return extra
+
+
 def render_form():
     """Render the complete ISAAC record entry form"""
 
@@ -71,6 +101,16 @@ def render_form():
 
     st.divider()
 
+    # Initialize extra vocab dicts (populated inside expanders, used at submission)
+    extra_record_info = {}
+    extra_sample = {}
+    extra_system = {}
+    extra_context = {}
+    extra_measurement = {}
+    extra_links = {}
+    extra_assets = {}
+    extra_descriptors = {}
+
     # Main form
     with st.form("isaac_record_form"):
 
@@ -107,6 +147,12 @@ def render_form():
                 record_domain_options,
                 help="Scientific domain classification"
             )
+
+        extra_record_info = render_extra_vocab_fields(
+            "Record Info",
+            ["record_type", "record_domain", "acquisition_source.source_type"],
+            "ri"
+        )
 
         # =====================================================================
         # SECTION 2: Timestamps
@@ -202,6 +248,12 @@ def render_form():
                 height=80
             )
 
+            extra_sample = render_extra_vocab_fields(
+                "Sample",
+                ["sample.sample_form", "sample.material.provenance", "sample.material.identifiers.scheme"],
+                "samp"
+            )
+
         # =====================================================================
         # SECTION 5: System (Optional)
         # =====================================================================
@@ -231,6 +283,12 @@ def render_form():
                 placeholder='{"voltage_kV": 40, "current_mA": 15, "scan_mode": "continuous"}',
                 height=80,
                 help="Values must be string, number, or boolean only"
+            )
+
+            extra_system = render_extra_vocab_fields(
+                "System",
+                ["system.domain", "system.instrument.instrument_type", "system.simulation.method"],
+                "sys"
             )
 
         # =====================================================================
@@ -265,6 +323,13 @@ def render_form():
                 height=80
             )
 
+            extra_context = render_extra_vocab_fields(
+                "Context",
+                ["context.environment", "context.electrochemistry.reaction",
+                 "context.electrochemistry.cell_type", "context.electrochemistry.potential_scale"],
+                "ctx"
+            )
+
         # =====================================================================
         # SECTION 7: Measurement (Optional)
         # =====================================================================
@@ -294,6 +359,12 @@ def render_form():
 
             processing_json = st.text_area("Processing Details (JSON)", placeholder='{"steps": ["normalization"]}', height=60)
 
+            extra_measurement = render_extra_vocab_fields(
+                "Measurement",
+                ["measurement.series.channels.role"],
+                "meas"
+            )
+
         # =====================================================================
         # SECTION 8: Links (Optional)
         # =====================================================================
@@ -309,6 +380,12 @@ def render_form():
             with col2:
                 link_basis = st.text_input("Basis", placeholder="Reasoning for this link")
                 link_notes = st.text_input("Notes", placeholder="Additional notes")
+
+            extra_links = render_extra_vocab_fields(
+                "Links",
+                ["links.rel"],
+                "lnk"
+            )
 
         # =====================================================================
         # SECTION 9: Assets (Optional)
@@ -326,6 +403,12 @@ def render_form():
                 asset_uri = st.text_input("URI", placeholder="https://...")
                 asset_sha256 = st.text_input("SHA256 Hash", placeholder="64-character hex string")
             asset_media_type = st.text_input("Media Type", placeholder="e.g., application/json")
+
+            extra_assets = render_extra_vocab_fields(
+                "Assets",
+                ["assets.content_role"],
+                "ast"
+            )
 
         # =====================================================================
         # SECTION 10: Descriptors (Optional)
@@ -350,6 +433,12 @@ def render_form():
                 desc_value = st.text_input("Value", placeholder="e.g., 1.12")
                 desc_unit = st.text_input("Unit", placeholder="e.g., eV")
                 desc_uncertainty = st.text_input("Uncertainty", placeholder="e.g., 0.05")
+
+            extra_descriptors = render_extra_vocab_fields(
+                "Descriptors",
+                ["descriptors.outputs.descriptors.kind", "descriptors.theoretical_metric"],
+                "desc"
+            )
 
         # =====================================================================
         # Form Actions
@@ -434,6 +523,16 @@ def render_form():
             desc_value=desc_value,
             desc_unit=desc_unit,
             desc_uncertainty=desc_uncertainty,
+            extra_vocab={
+                "Record Info": extra_record_info,
+                "Sample": extra_sample,
+                "System": extra_system,
+                "Context": extra_context,
+                "Measurement": extra_measurement,
+                "Links": extra_links,
+                "Assets": extra_assets,
+                "Descriptors": extra_descriptors,
+            },
         )
 
         # Validate required fields
@@ -468,6 +567,14 @@ def render_form():
                     file_name=f"isaac_record_{record['record_id']}.json",
                     mime="application/json"
                 )
+
+
+def _set_nested(d: dict, dotted_key: str, value):
+    """Set a value in a nested dict using a dotted key like 'context.electrochemistry.control_mode'."""
+    parts = dotted_key.split(".")
+    for part in parts[:-1]:
+        d = d.setdefault(part, {})
+    d[parts[-1]] = value
 
 
 def parse_json_safe(text: str):
@@ -723,6 +830,12 @@ def build_record(**kwargs) -> dict:
 
         if descriptors['outputs']:
             record['descriptors'] = descriptors
+
+    # Merge any extra vocabulary fields that were dynamically rendered
+    extra_vocab = kwargs.get('extra_vocab', {})
+    for section_name, extras in extra_vocab.items():
+        for cat_key, value in extras.items():
+            _set_nested(record, cat_key, value)
 
     return record
 

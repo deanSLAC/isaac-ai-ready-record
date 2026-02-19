@@ -4,6 +4,7 @@ import json
 import requests
 import ontology
 import database
+import branding
 import os
 import importlib
 import streamlit.components.v1 as components
@@ -21,6 +22,9 @@ st.markdown("""
 [data-testid="collapsedControl"] { display: none; }
 </style>
 """, unsafe_allow_html=True)
+
+# ISAAC logo at the top of every page
+branding.render_header()
 
 # Initialize database tables on startup (if configured)
 if database.is_db_configured():
@@ -1096,3 +1100,8 @@ elif page == "About":
     - **API Documentation**: REST API reference for programmatic access
     """)
     st.markdown("**Schema version: ISAAC AI-Ready Record v1.0**")
+
+# =============================================================================
+# FOOTER: Partner & DOE logos on every page
+# =============================================================================
+branding.render_footer()

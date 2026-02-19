@@ -125,8 +125,8 @@ def _parse_yaml_from_markdown(md_content: str) -> dict:
     Returns:
         Parsed dict from the YAML block, or empty dict if not found/parse error.
     """
-    # Match the ## Controlled Vocabulary section followed by a yaml code block
-    pattern = r'##\s*Controlled\s+Vocabulary\s*\n+```yaml\s*\n(.*?)```'
+    # Match both ATX (## Heading) and Setext (Heading\n---) style headings
+    pattern = r'(?:##\s*Controlled\s+Vocabulary|Controlled\s+Vocabulary\n-+)\s*\n+```yaml\s*\n(.*?)```'
     match = re.search(pattern, md_content, re.DOTALL | re.IGNORECASE)
 
     if not match:
@@ -379,7 +379,9 @@ Return ONLY valid JSON (no markdown fencing):
 # Wiki Push Operations
 # =============================================================================
 
-def push_change_to_wiki(section: str, vocab_for_section: dict, wiki_prose: str = "") -> tuple:
+def push_change_to_wiki(section: str, vocab_for_section: dict,
+                        wiki_prose: str = "", category: str = "",
+                        proposal_type: str = "add_term") -> tuple:
     """
     Clone the wiki, update the YAML block for the given section,
     optionally insert wiki prose, commit & push.
@@ -387,7 +389,9 @@ def push_change_to_wiki(section: str, vocab_for_section: dict, wiki_prose: str =
     Args:
         section: section name (e.g. "System")
         vocab_for_section: full vocabulary dict for this section
-        wiki_prose: optional markdown prose to insert before the Controlled Vocabulary section
+        wiki_prose: optional markdown prose to insert into wiki page
+        category: category key (e.g. "system.domain") — used to locate the right subsection
+        proposal_type: 'add_term' or 'add_category'
 
     Returns:
         (success: bool, message: str)
@@ -411,26 +415,81 @@ def push_change_to_wiki(section: str, vocab_for_section: dict, wiki_prose: str =
         with open(md_file, 'r') as f:
             content = f.read()
 
-        # Insert wiki prose before the Controlled Vocabulary section (if provided)
+        # Insert wiki prose into the correct location
         if wiki_prose and wiki_prose.strip():
-            cv_pattern = r'(##\s*Controlled\s+Vocabulary)'
-            match = re.search(cv_pattern, content, re.IGNORECASE)
-            if match:
-                insert_pos = match.start()
-                content = content[:insert_pos] + wiki_prose.strip() + "\n\n" + content[insert_pos:]
-            else:
-                # No CV section found, just append prose
-                content = content.rstrip() + "\n\n" + wiki_prose.strip() + "\n"
+            inserted = False
+
+            if proposal_type == "add_term" and category:
+                # For add_term: find the category's subsection and append
+                # the bullet inside the **Values**: list.
+                # Look for a heading like: ### 2.1 `system.domain`
+                cat_heading = re.search(
+                    r'###[^`\n]*`' + re.escape(category) + r'`',
+                    content
+                )
+                if cat_heading:
+                    # Find the **Values**: bullet within this subsection
+                    # (search from the heading to the next ### or ## heading)
+                    sub_start = cat_heading.start()
+                    next_heading = re.search(r'\n#{2,3}\s', content[sub_start + 1:])
+                    sub_end = sub_start + 1 + next_heading.start() if next_heading else len(content)
+                    subsection = content[sub_start:sub_end]
+
+                    # Find the last indented value bullet (    *   `value`: ...)
+                    # to insert after it
+                    value_bullets = list(re.finditer(
+                        r'^    \*\s+`[^`]+`\s*:.*$',
+                        subsection,
+                        re.MULTILINE
+                    ))
+                    if value_bullets:
+                        last_bullet = value_bullets[-1]
+                        # Check for sub-bullets (constraints) after the last value
+                        remaining = subsection[last_bullet.end():]
+                        extra = 0
+                        for line in remaining.split('\n'):
+                            if line.startswith('        *'):
+                                extra += len(line) + 1
+                            elif line.strip() == '':
+                                extra += len(line) + 1
+                                continue
+                            else:
+                                break
+                        abs_insert = sub_start + last_bullet.end() + extra
+                        # Ensure the prose has proper indentation (4 spaces)
+                        prose_line = wiki_prose.strip()
+                        if not prose_line.startswith('    '):
+                            prose_line = '    ' + prose_line
+                        content = content[:abs_insert] + "\n" + prose_line + content[abs_insert:]
+                        inserted = True
+
+            if not inserted:
+                # Fallback for add_category or if subsection not found:
+                # insert before Controlled Vocabulary heading
+                cv_pattern = r'(#{1,2}\s*Controlled\s+Vocabulary|Controlled\s+Vocabulary\n-+)'
+                match = re.search(cv_pattern, content, re.IGNORECASE)
+                if match:
+                    insert_pos = match.start()
+                    content = content[:insert_pos] + wiki_prose.strip() + "\n\n" + content[insert_pos:]
+                else:
+                    content = content.rstrip() + "\n\n" + wiki_prose.strip() + "\n"
 
         # Update the YAML block
         new_yaml = _regenerate_yaml_block(vocab_for_section)
-        new_block = f"## Controlled Vocabulary\n\n```yaml\n{new_yaml}\n```"
 
-        yaml_pattern = r'##\s*Controlled\s+Vocabulary\s*\n+```yaml\s*\n.*?```'
+        # Match both ATX (## Heading) and Setext (Heading\n---) style headings
+        yaml_pattern = r'(?:##\s*Controlled\s+Vocabulary|Controlled\s+Vocabulary\n-+)\s*\n+```yaml\s*\n.*?```'
         if re.search(yaml_pattern, content, re.DOTALL | re.IGNORECASE):
-            new_content = re.sub(yaml_pattern, new_block, content, flags=re.DOTALL | re.IGNORECASE)
+            # Preserve the original heading style by only replacing from ```yaml onward
+            yaml_only = r'((?:##\s*Controlled\s+Vocabulary|Controlled\s+Vocabulary\n-+)\s*\n+)```yaml\s*\n.*?```'
+            new_content = re.sub(
+                yaml_only,
+                r'\g<1>' + f"```yaml\n{new_yaml}\n```",
+                content,
+                flags=re.DOTALL | re.IGNORECASE
+            )
         else:
-            new_content = content.rstrip() + "\n\n" + new_block + "\n"
+            new_content = content.rstrip() + "\n\n## Controlled Vocabulary\n\n```yaml\n" + new_yaml + "\n```\n"
 
         with open(md_file, 'w') as f:
             f.write(new_content)
@@ -501,7 +560,11 @@ def apply_approved_proposal(proposal: dict, wiki_prose: str = "") -> tuple:
     wiki_push_ok = True
     wiki_msg = ""
     try:
-        ok, wiki_msg = push_change_to_wiki(section, vocab[section], wiki_prose=wiki_prose)
+        ok, wiki_msg = push_change_to_wiki(
+            section, vocab[section], wiki_prose=wiki_prose,
+            category=proposal.get('category', ''),
+            proposal_type=proposal_type
+        )
         wiki_push_ok = ok
     except Exception as e:
         wiki_push_ok = False

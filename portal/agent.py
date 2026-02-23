@@ -12,6 +12,7 @@ import re
 import requests as http_requests
 
 import database
+import ontology
 
 # Stanford AI API Gateway (same config as ontology.py)
 LLM_API_URL = "https://aiapi-prod.stanford.edu/v1/chat/completions"
@@ -83,6 +84,16 @@ FROM records,
      jsonb_array_elements(s->'channels') AS ch;
 ```
 
+## ISAAC Living Ontology (Controlled Vocabulary)
+
+The vocabulary below is synced from the ISAAC GitHub wiki. It defines every \
+controlled field, its description, and all allowed values. Use this to \
+understand the scientific meaning of fields and to write correct queries \
+(e.g., filtering by exact vocabulary terms). The vocabulary is organised by \
+section > category > allowed values.
+
+{vocabulary_block}
+
 ## Rules
 
 1. When you need data from the database, write SQL inside a ```sql fenced \
@@ -93,6 +104,7 @@ code block. The system will execute it and show you the results.
 5. After receiving query results, summarise them clearly for the researcher.
 6. If a question cannot be answered from the database, say so.
 7. Always be concise and scientifically precise.
+8. Use vocabulary knowledge to interpret results and suggest follow-up queries.
 """
 
 
@@ -166,9 +178,36 @@ def _format_query_results(rows: list[dict], sql: str) -> str:
     return "\n".join(lines)
 
 
+def _build_vocabulary_block() -> str:
+    """
+    Load the living ontology from the wiki-synced vocabulary cache and
+    format it as a compact text block for the system prompt.
+    """
+    try:
+        vocab = ontology.load_vocabulary()
+    except Exception:
+        vocab = {}
+
+    if not vocab:
+        return "(Vocabulary not available — answer based on raw database values.)"
+
+    lines = []
+    for section, categories in vocab.items():
+        lines.append(f"### {section}")
+        for cat_key, cat_data in categories.items():
+            desc = cat_data.get("description", "")
+            values = cat_data.get("values", [])
+            values_str = ", ".join(values) if values else "(no values)"
+            lines.append(f"- **{cat_key}**: {desc}")
+            lines.append(f"  Values: [{values_str}]")
+    return "\n".join(lines)
+
+
 def build_initial_messages() -> list[dict]:
-    """Create the initial conversation with the system prompt."""
-    return [{"role": "system", "content": SYSTEM_PROMPT}]
+    """Create the initial conversation with the system prompt + live vocabulary."""
+    vocab_block = _build_vocabulary_block()
+    prompt = SYSTEM_PROMPT.replace("{vocabulary_block}", vocab_block)
+    return [{"role": "system", "content": prompt}]
 
 
 def run_agent_turn(conversation_history: list[dict]) -> tuple[str, list[dict]]:

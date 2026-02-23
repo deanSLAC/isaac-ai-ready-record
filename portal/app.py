@@ -843,10 +843,9 @@ elif page == "nano ISAAC":
             st.session_state.agent_display = []
             st.rerun()
 
-        # Scrollable chat container
-        chat_box = st.container(height=500)
+        # Scrollable chat window (fixed max height)
+        chat_box = st.container(height=480)
 
-        # Render existing conversation inside the container
         with chat_box:
             if not st.session_state.agent_display:
                 st.markdown(
@@ -858,30 +857,34 @@ elif page == "nano ISAAC":
                 with st.chat_message(msg["role"]):
                     st.markdown(msg["content"])
 
-        # Chat input (pinned below the container)
-        if prompt := st.chat_input("Ask about the ISAAC database..."):
-            # Show user message immediately
-            st.session_state.agent_display.append({"role": "user", "content": prompt})
-            with chat_box:
-                with st.chat_message("user"):
-                    st.markdown(prompt)
+        # Input form directly below the chat box (not pinned to viewport)
+        with st.form("nano_isaac_input", clear_on_submit=True):
+            input_col, send_col = st.columns([6, 1])
+            with input_col:
+                prompt = st.text_input(
+                    "Message", placeholder="Ask about the ISAAC database...",
+                    label_visibility="collapsed",
+                )
+            with send_col:
+                submitted = st.form_submit_button("Send", use_container_width=True)
 
-            # Append to LLM conversation
+        if submitted and prompt and prompt.strip():
+            prompt = prompt.strip()
+
+            # Append user message
+            st.session_state.agent_display.append({"role": "user", "content": prompt})
             st.session_state.agent_messages.append({"role": "user", "content": prompt})
 
-            # Run agent
-            with chat_box:
-                with st.chat_message("assistant"):
-                    with st.spinner("Thinking..."):
-                        try:
-                            reply, updated = agent.run_agent_turn(st.session_state.agent_messages)
-                            st.session_state.agent_messages = updated
-                            st.markdown(reply)
-                            st.session_state.agent_display.append({"role": "assistant", "content": reply})
-                        except Exception as exc:
-                            err = f"Agent error: {exc}"
-                            st.error(err)
-                            st.session_state.agent_display.append({"role": "assistant", "content": err})
+            # Run agent and append reply
+            try:
+                reply, updated = agent.run_agent_turn(st.session_state.agent_messages)
+                st.session_state.agent_messages = updated
+                st.session_state.agent_display.append({"role": "assistant", "content": reply})
+            except Exception as exc:
+                err = f"Agent error: {exc}"
+                st.session_state.agent_display.append({"role": "assistant", "content": err})
+
+            st.rerun()
 
 
 # =============================================================================
@@ -1026,7 +1029,6 @@ elif page == "About":
     st.markdown("**Schema version: ISAAC AI-Ready Record v1.0**")
 
 # =============================================================================
-# FOOTER: Partner & DOE logos on every page (skip on chat page)
+# FOOTER: Partner & DOE logos on every page
 # =============================================================================
-if page != "nano ISAAC":
-    branding.render_footer()
+branding.render_footer()

@@ -817,8 +817,14 @@ elif page == "Saved Records":
 # PAGE: nano ISAAC
 # =============================================================================
 elif page == "nano ISAAC":
-    st.header("nano ISAAC")
-    st.caption("AI chat agent — ask questions about the ISAAC record database")
+    # Header row with title and Clear button
+    title_col, btn_col = st.columns([5, 1])
+    with title_col:
+        st.header("nano ISAAC")
+        st.caption("AI chat agent — ask questions about the ISAAC record database")
+    with btn_col:
+        st.markdown("")  # vertical spacing
+        clear_chat = st.button("Clear Chat", use_container_width=True)
 
     # Check prerequisites
     if not db_connected:
@@ -832,39 +838,50 @@ elif page == "nano ISAAC":
         if "agent_display" not in st.session_state:
             st.session_state.agent_display = []
 
-        # Clear chat button
-        if st.button("Clear Chat"):
+        if clear_chat:
             st.session_state.agent_messages = agent.build_initial_messages()
             st.session_state.agent_display = []
             st.rerun()
 
-        # Render existing conversation
-        for msg in st.session_state.agent_display:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+        # Scrollable chat container
+        chat_box = st.container(height=500)
 
-        # Chat input
+        # Render existing conversation inside the container
+        with chat_box:
+            if not st.session_state.agent_display:
+                st.markdown(
+                    "*Ask me anything about the ISAAC database — e.g. "
+                    "\"How many records are there?\" or "
+                    "\"What materials have been measured?\"*"
+                )
+            for msg in st.session_state.agent_display:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+
+        # Chat input (pinned below the container)
         if prompt := st.chat_input("Ask about the ISAAC database..."):
             # Show user message immediately
             st.session_state.agent_display.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
+            with chat_box:
+                with st.chat_message("user"):
+                    st.markdown(prompt)
 
             # Append to LLM conversation
             st.session_state.agent_messages.append({"role": "user", "content": prompt})
 
             # Run agent
-            with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    try:
-                        reply, updated = agent.run_agent_turn(st.session_state.agent_messages)
-                        st.session_state.agent_messages = updated
-                        st.markdown(reply)
-                        st.session_state.agent_display.append({"role": "assistant", "content": reply})
-                    except Exception as exc:
-                        err = f"Agent error: {exc}"
-                        st.error(err)
-                        st.session_state.agent_display.append({"role": "assistant", "content": err})
+            with chat_box:
+                with st.chat_message("assistant"):
+                    with st.spinner("Thinking..."):
+                        try:
+                            reply, updated = agent.run_agent_turn(st.session_state.agent_messages)
+                            st.session_state.agent_messages = updated
+                            st.markdown(reply)
+                            st.session_state.agent_display.append({"role": "assistant", "content": reply})
+                        except Exception as exc:
+                            err = f"Agent error: {exc}"
+                            st.error(err)
+                            st.session_state.agent_display.append({"role": "assistant", "content": err})
 
 
 # =============================================================================
@@ -1009,6 +1026,7 @@ elif page == "About":
     st.markdown("**Schema version: ISAAC AI-Ready Record v1.0**")
 
 # =============================================================================
-# FOOTER: Partner & DOE logos on every page
+# FOOTER: Partner & DOE logos on every page (skip on chat page)
 # =============================================================================
-branding.render_footer()
+if page != "nano ISAAC":
+    branding.render_footer()

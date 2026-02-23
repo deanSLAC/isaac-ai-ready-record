@@ -5,6 +5,7 @@ PostgreSQL connection for vocabulary, templates, and records storage
 
 import os
 import json
+import re
 from datetime import datetime
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -305,6 +306,56 @@ def count_records() -> int:
         cur.execute('SELECT COUNT(*) as count FROM records')
         row = cur.fetchone()
         return row['count']
+    finally:
+        cur.close()
+        conn.close()
+
+
+def execute_readonly_query(sql: str, max_rows: int = 50, timeout_ms: int = 5000) -> list:
+    """
+    Execute a read-only SQL query against the database.
+
+    Security:
+    - Only SELECT and WITH (CTE) statements are allowed
+    - Mutation keywords (INSERT, UPDATE, DELETE, DROP, ALTER, etc.) are rejected
+    - A LIMIT clause is enforced (appended if missing)
+    - A statement timeout is set to prevent long-running queries
+
+    Args:
+        sql: The SQL query string (must be SELECT or WITH)
+        max_rows: Maximum rows to return (default 50)
+        timeout_ms: Statement timeout in milliseconds (default 5000)
+
+    Returns:
+        List of row dicts from the query result
+
+    Raises:
+        ValueError: If the query is not a safe read-only SELECT/WITH
+    """
+    stripped = sql.strip().rstrip(";")
+    upper = stripped.upper()
+
+    # Must start with SELECT or WITH
+    if not (upper.startswith("SELECT") or upper.startswith("WITH")):
+        raise ValueError("Only SELECT or WITH (CTE) queries are allowed.")
+
+    # Reject mutation keywords anywhere in the query
+    forbidden = r'\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY|EXECUTE|CALL)\b'
+    if re.search(forbidden, upper):
+        raise ValueError("Query contains forbidden mutation keywords.")
+
+    # Enforce LIMIT if not present
+    if "LIMIT" not in upper:
+        stripped += f" LIMIT {max_rows}"
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(f"SET LOCAL statement_timeout = '{timeout_ms}'")
+        cur.execute(stripped)
+        rows = cur.fetchall()
+        return [dict(row) for row in rows]
     finally:
         cur.close()
         conn.close()

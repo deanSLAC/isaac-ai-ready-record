@@ -5,6 +5,7 @@ import requests
 import ontology
 import database
 import branding
+import agent
 import os
 import importlib
 import streamlit.components.v1 as components
@@ -69,7 +70,7 @@ if db_connected and os.environ.get("WIKI_REPO_URL"):
 if "current_page" not in st.session_state:
     st.session_state.current_page = "Dashboard"
 
-PAGES = ["Dashboard", "Ontology Editor", "Record Form", "Record Validator", "Saved Records", "API Documentation", "About"]
+PAGES = ["Dashboard", "Ontology Editor", "Record Form", "Record Validator", "Saved Records", "nano ISAAC", "API Documentation", "About"]
 if user_is_admin:
     # Insert Admin Review after Ontology Editor
     PAGES.insert(2, "Admin Review")
@@ -810,6 +811,60 @@ elif page == "Saved Records":
 
         except Exception as e:
             st.error(f"Error loading records: {e}")
+
+
+# =============================================================================
+# PAGE: nano ISAAC
+# =============================================================================
+elif page == "nano ISAAC":
+    st.header("nano ISAAC")
+    st.caption("AI chat agent — ask questions about the ISAAC record database")
+
+    # Check prerequisites
+    if not db_connected:
+        st.warning("Database not connected. nano ISAAC requires a live database.")
+    elif not os.environ.get("ISAAC_LLM_API_KEY"):
+        st.warning("LLM API key not configured. Set the ISAAC_LLM_API_KEY environment variable.")
+    else:
+        # Initialise session state
+        if "agent_messages" not in st.session_state:
+            st.session_state.agent_messages = agent.build_initial_messages()
+        if "agent_display" not in st.session_state:
+            st.session_state.agent_display = []
+
+        # Clear chat button
+        if st.button("Clear Chat"):
+            st.session_state.agent_messages = agent.build_initial_messages()
+            st.session_state.agent_display = []
+            st.rerun()
+
+        # Render existing conversation
+        for msg in st.session_state.agent_display:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        # Chat input
+        if prompt := st.chat_input("Ask about the ISAAC database..."):
+            # Show user message immediately
+            st.session_state.agent_display.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            # Append to LLM conversation
+            st.session_state.agent_messages.append({"role": "user", "content": prompt})
+
+            # Run agent
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    try:
+                        reply, updated = agent.run_agent_turn(st.session_state.agent_messages)
+                        st.session_state.agent_messages = updated
+                        st.markdown(reply)
+                        st.session_state.agent_display.append({"role": "assistant", "content": reply})
+                    except Exception as exc:
+                        err = f"Agent error: {exc}"
+                        st.error(err)
+                        st.session_state.agent_display.append({"role": "assistant", "content": err})
 
 
 # =============================================================================

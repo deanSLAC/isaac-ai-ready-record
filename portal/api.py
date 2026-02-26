@@ -13,9 +13,12 @@ Run with gunicorn:  gunicorn -b 0.0.0.0:8502 portal.api:app
 import os
 import sys
 import json
+import time
 import logging
+import functools
 from pathlib import Path
 
+import requests as http_requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from jsonschema import Draft202012Validator
@@ -47,6 +50,14 @@ logger = logging.getLogger("isaac-portal-api")
 # Configuration
 # ---------------------------------------------------------------------------
 PORT = int(os.environ.get("PORT", 8502))
+AUTHENTIK_INTERNAL_URL = os.environ.get(
+    "AUTHENTIK_INTERNAL_URL",
+    "http://authentik-server.authentik.svc.cluster.local:9000",
+)
+
+# In-memory token cache: token -> {"user": str, "expires": float}
+_token_cache: dict = {}
+_TOKEN_CACHE_TTL = 300  # 5 minutes
 
 # ---------------------------------------------------------------------------
 # Load ISAAC record JSON Schema (Draft 2020-12)
@@ -64,21 +75,60 @@ logger.info("Loaded ISAAC schema from %s", SCHEMA_PATH)
 # ---------------------------------------------------------------------------
 # Auth helper
 # ---------------------------------------------------------------------------
+def _validate_bearer_token(token: str) -> str | None:
+    """
+    Validate a Bearer token against Authentik.
+
+    Calls GET /api/v3/core/users/me/ with the token.  Returns the username
+    on success, or None if the token is invalid / Authentik is unreachable.
+    Results are cached for 5 minutes to reduce load on Authentik.
+    """
+    now = time.monotonic()
+
+    # Check cache
+    cached = _token_cache.get(token)
+    if cached and cached["expires"] > now:
+        return cached["user"]
+
+    # Evict expired entries (cheap linear scan — cache is small)
+    expired_keys = [k for k, v in _token_cache.items() if v["expires"] <= now]
+    for k in expired_keys:
+        del _token_cache[k]
+
+    try:
+        resp = http_requests.get(
+            f"{AUTHENTIK_INTERNAL_URL}/api/v3/core/users/me/",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5,
+        )
+    except Exception as exc:
+        logger.error("Authentik token validation request failed: %s", exc)
+        return None
+
+    if resp.status_code != 200:
+        logger.info("Authentik rejected token (HTTP %d)", resp.status_code)
+        return None
+
+    try:
+        username = resp.json()["user"]["username"]
+    except (KeyError, TypeError, ValueError):
+        logger.warning("Unexpected Authentik /users/me/ response: %s", resp.text[:200])
+        return None
+
+    _token_cache[token] = {"user": username, "expires": now + _TOKEN_CACHE_TTL}
+    return username
+
+
 def _get_auth_info():
     """
-    Extract authentication information from the request.
+    Extract and validate authentication from the request.
 
-    In production behind Authentik forward-auth, nginx injects headers such as
-    X-authentik-username.  For direct API access, callers can supply a Bearer
-    token in the Authorization header.
+    Supports two methods:
+    1. Authentik SSO headers (X-authentik-username) — set by nginx forward-auth
+       for browser sessions routed through the main portal ingress.
+    2. Bearer token — validated against Authentik's /api/v3/core/users/me/.
 
-    Returns a dict with 'method' and 'user' (or None if unauthenticated).
-
-    NOTE: Authentication is logged but NOT enforced. To enforce, add a check
-    here and return a 401 response early from each endpoint. Example:
-        info = _get_auth_info()
-        if info is None:
-            return jsonify({"error": "authentication_required"}), 401
+    Returns a dict with 'method' and 'user', or None if unauthenticated.
     """
     # Check for Authentik SSO header (set by nginx auth_request)
     authentik_user = request.headers.get("X-authentik-username")
@@ -89,9 +139,11 @@ def _get_auth_info():
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
-        # TODO: validate the token against Authentik's token introspection
-        # endpoint or a shared secret when enforcement is enabled.
-        return {"method": "bearer_token", "user": None, "token_present": True}
+        username = _validate_bearer_token(token)
+        if username:
+            return {"method": "bearer_token", "user": username}
+        # Token present but invalid — return None so _require_auth rejects it
+        return None
 
     return None
 
@@ -108,6 +160,25 @@ def _log_request(auth_info):
         )
     else:
         logger.info("%s %s [unauthenticated]", request.method, request.path)
+
+
+def _require_auth(fn):
+    """Decorator that enforces authentication on an endpoint."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        auth_info = _get_auth_info()
+        _log_request(auth_info)
+        if auth_info is None:
+            return jsonify({
+                "error": "authentication_required",
+                "message": (
+                    "Provide a valid Bearer token in the Authorization header. "
+                    "Create one at https://isaac.slac.stanford.edu/auth/if/user/#/tokens"
+                ),
+            }), 401
+        request.auth_info = auth_info
+        return fn(*args, **kwargs)
+    return wrapper
 
 
 # ---------------------------------------------------------------------------
@@ -155,13 +226,12 @@ def health():
 # --- Validate (dry-run, no DB write) --------------------------------------
 
 @app.route("/portal/api/validate", methods=["POST"])
+@_require_auth
 def validate():
     """
     Validate a JSON body against the ISAAC record schema.
     Does NOT persist anything to the database.
     """
-    auth_info = _get_auth_info()
-    _log_request(auth_info)
 
     data = request.get_json(silent=True)
     if data is None:
@@ -189,12 +259,11 @@ def validate():
 # --- Create record ---------------------------------------------------------
 
 @app.route("/portal/api/records", methods=["POST"])
+@_require_auth
 def create_record():
     """
     Validate and persist a new ISAAC record.
     """
-    auth_info = _get_auth_info()
-    _log_request(auth_info)
 
     data = request.get_json(silent=True)
     if data is None:
@@ -240,13 +309,12 @@ def create_record():
 # --- List records ----------------------------------------------------------
 
 @app.route("/portal/api/records", methods=["GET"])
+@_require_auth
 def list_records():
     """
     List records (metadata only) with optional pagination.
     Query params: ?limit=100&offset=0
     """
-    auth_info = _get_auth_info()
-    _log_request(auth_info)
 
     try:
         limit = int(request.args.get("limit", 100))
@@ -265,12 +333,11 @@ def list_records():
 # --- Get single record -----------------------------------------------------
 
 @app.route("/portal/api/records/<record_id>", methods=["GET"])
+@_require_auth
 def get_record(record_id):
     """
     Retrieve the full JSON for a single record by its ULID.
     """
-    auth_info = _get_auth_info()
-    _log_request(auth_info)
 
     try:
         record = database.get_record(record_id)

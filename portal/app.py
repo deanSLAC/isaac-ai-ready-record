@@ -896,12 +896,12 @@ elif page == "API Documentation":
 
     st.subheader("Authentication")
     st.markdown("""
-    The API is protected by [Authentik](https://goauthentik.io/) forward-auth when accessed through
-    `https://isaac.slac.stanford.edu`. To make direct API calls, you need an **Authentik API token**.
+    The API requires a valid **Authentik API token** for all endpoints except the health check.
 
-    1. Log in to the [Authentik admin interface](https://isaac.slac.stanford.edu/auth/if/admin/)
-    2. Navigate to **Directory > Tokens and App passwords** and create a new token
-    3. Pass the token in the `Authorization` header:
+    1. Log in to your [Authentik user settings](https://isaac.slac.stanford.edu/auth/if/user/#/tokens)
+    2. In the left sidebar, click **Tokens and App passwords**
+    3. Click **Create Token**, give it an identifier (e.g., `my-api-key`), and copy the token key
+    4. Pass the token in the `Authorization` header:
     """)
     st.code('Authorization: Bearer <your-authentik-token>', language="text")
 

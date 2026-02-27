@@ -419,8 +419,8 @@ def create_api_key():
         if user_pk is None:
             return jsonify({"error": "User not found in Authentik"}), 404
 
-        import ulid as ulid_mod
-        identifier = f"isaac-api-{username}-{ulid_mod.new()}"
+        import ulid
+        identifier = f"isaac-api-{username}-{ulid.ULID()}"
 
         resp = http_requests.post(
             f"{AUTHENTIK_INTERNAL_URL}/api/v3/core/tokens/",

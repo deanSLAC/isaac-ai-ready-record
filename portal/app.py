@@ -934,8 +934,8 @@ elif page == "API Keys":
             st.subheader("Generate New Key")
             if st.button("Generate API Key"):
                 try:
-                    import ulid as ulid_mod
-                    identifier = f"isaac-api-{current_username}-{ulid_mod.new()}"
+                    import ulid
+                    identifier = f"isaac-api-{current_username}-{ulid.ULID()}"
 
                     create_resp = requests.post(
                         f"{authentik_api_url}/api/v3/core/tokens/",
@@ -1130,6 +1130,32 @@ elif page == "API Documentation":
     st.markdown("#### Get a Single Record")
     st.code("GET /portal/api/records/<record_id>", language="text")
     st.markdown("Returns the full JSON for a specific record by its ULID.")
+
+    st.divider()
+
+    # --- Python example ---
+    st.subheader("Python Example")
+    st.markdown("List records and fetch a single record using `requests`:")
+    st.code('''import requests
+
+API_URL = "https://isaac.slac.stanford.edu/portal/api"
+TOKEN = "your-api-key-here"
+
+headers = {"Authorization": f"Bearer {TOKEN}"}
+
+# List records (paginated)
+resp = requests.get(f"{API_URL}/records", headers=headers, params={"limit": 10})
+resp.raise_for_status()
+records = resp.json()
+print(f"Found {len(records)} records")
+
+# Fetch a single record by ID
+if records:
+    record_id = records[0]["record_id"]
+    resp = requests.get(f"{API_URL}/records/{record_id}", headers=headers)
+    resp.raise_for_status()
+    record = resp.json()
+    print(f"Record {record_id}: {record['record_type']} / {record['record_domain']}")''', language="python")
 
     st.divider()
     st.markdown(f"**Schema version: ISAAC AI-Ready Record v1.0**")

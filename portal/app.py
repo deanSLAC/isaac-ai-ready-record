@@ -7,6 +7,7 @@ import database
 import branding
 import agent
 import os
+import re
 import importlib
 import streamlit.components.v1 as components
 from datetime import datetime, timezone
@@ -932,10 +933,13 @@ elif page == "API Keys":
         if user_pk:
             # --- Generate new key ---
             st.subheader("Generate New Key")
+            # Sanitize username for use in Authentik token identifiers (slug-compatible)
+            _safe_username = re.sub(r'[^a-z0-9-]', '-', current_username.lower()).strip('-')
+
             if st.button("Generate API Key"):
                 try:
                     import ulid
-                    identifier = f"isaac-api-{current_username}-{str(ulid.ULID()).lower()}"
+                    identifier = f"isaac-api-{_safe_username}-{str(ulid.ULID()).lower()}"
 
                     create_resp = requests.post(
                         f"{authentik_api_url}/api/v3/core/tokens/",
@@ -987,7 +991,7 @@ elif page == "API Keys":
 
                 keys = [
                     t for t in list_resp.json().get("results", [])
-                    if t.get("identifier", "").startswith(f"isaac-api-{current_username}-")
+                    if t.get("identifier", "").startswith(f"isaac-api-{_safe_username}-")
                 ]
 
                 if not keys:
@@ -1001,7 +1005,7 @@ elif page == "API Keys":
                             st.text(f"{ident}  (created: {created})")
                         with col2:
                             if st.button("Revoke", key=f"revoke_{ident}"):
-                                if not ident.startswith(f"isaac-api-{current_username}-"):
+                                if not ident.startswith(f"isaac-api-{_safe_username}-"):
                                     st.error("You can only revoke your own keys.")
                                 else:
                                     try:

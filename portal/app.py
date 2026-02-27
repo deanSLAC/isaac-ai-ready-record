@@ -927,7 +927,7 @@ elif page == "API Keys":
             if user_results:
                 user_pk = user_results[0]["pk"]
         except Exception as exc:
-            st.error(f"Could not look up user in Authentik: {exc}")
+            st.error("Could not look up your account. Please try again or contact an administrator.")
 
         if user_pk:
             # --- Generate new key ---
@@ -935,7 +935,7 @@ elif page == "API Keys":
             if st.button("Generate API Key"):
                 try:
                     import ulid
-                    identifier = f"isaac-api-{current_username}-{ulid.ULID()}"
+                    identifier = f"isaac-api-{current_username}-{str(ulid.ULID()).lower()}"
 
                     create_resp = requests.post(
                         f"{authentik_api_url}/api/v3/core/tokens/",
@@ -949,6 +949,9 @@ elif page == "API Keys":
                         },
                         timeout=10,
                     )
+                    if create_resp.status_code == 400:
+                        detail = create_resp.json() if create_resp.headers.get("content-type", "").startswith("application/json") else {}
+                        raise ValueError(f"Invalid request: {detail.get('identifier', detail.get('non_field_errors', 'unknown error'))}")
                     create_resp.raise_for_status()
 
                     key_resp = requests.get(
@@ -968,7 +971,7 @@ elif page == "API Keys":
                         language="bash",
                     )
                 except Exception as exc:
-                    st.error(f"Failed to create API key: {exc}")
+                    st.error(f"Failed to create API key. Please try again or contact an administrator.")
 
             # --- List existing keys ---
             st.divider()
@@ -1013,7 +1016,7 @@ elif page == "API Keys":
                                     except Exception as exc:
                                         st.error(f"Failed to revoke: {exc}")
             except Exception as exc:
-                st.error(f"Failed to list API keys: {exc}")
+                st.error("Failed to list API keys. Please try again or contact an administrator.")
 
 
 # =============================================================================

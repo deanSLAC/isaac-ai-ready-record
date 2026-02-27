@@ -984,7 +984,7 @@ elif page == "API Keys":
 
                 keys = [
                     t for t in list_resp.json().get("results", [])
-                    if t.get("identifier", "").startswith("isaac-api-")
+                    if t.get("identifier", "").startswith(f"isaac-api-{current_username}-")
                 ]
 
                 if not keys:
@@ -998,17 +998,20 @@ elif page == "API Keys":
                             st.text(f"{ident}  (created: {created})")
                         with col2:
                             if st.button("Revoke", key=f"revoke_{ident}"):
-                                try:
-                                    del_resp = requests.delete(
-                                        f"{authentik_api_url}/api/v3/core/tokens/{ident}/",
-                                        headers=admin_headers,
-                                        timeout=5,
-                                    )
-                                    del_resp.raise_for_status()
-                                    st.success(f"Revoked: {ident}")
-                                    st.rerun()
-                                except Exception as exc:
-                                    st.error(f"Failed to revoke: {exc}")
+                                if not ident.startswith(f"isaac-api-{current_username}-"):
+                                    st.error("You can only revoke your own keys.")
+                                else:
+                                    try:
+                                        del_resp = requests.delete(
+                                            f"{authentik_api_url}/api/v3/core/tokens/{ident}/",
+                                            headers=admin_headers,
+                                            timeout=5,
+                                        )
+                                        del_resp.raise_for_status()
+                                        st.success(f"Revoked: {ident}")
+                                        st.rerun()
+                                    except Exception as exc:
+                                        st.error(f"Failed to revoke: {exc}")
             except Exception as exc:
                 st.error(f"Failed to list API keys: {exc}")
 

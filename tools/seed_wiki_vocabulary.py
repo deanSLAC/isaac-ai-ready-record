@@ -3,7 +3,7 @@
 Seed Wiki Controlled Vocabulary
 
 One-time script to append ## Controlled Vocabulary YAML blocks
-to each wiki page in deanSLAC/isaac-ai-ready-record.wiki.
+to each wiki page in ISAAC-DOE/isaac-ai-ready-record.wiki.
 
 Usage:
     export GITHUB_TOKEN="github_pat_xxxx..."
@@ -30,7 +30,7 @@ except ImportError:
     print("GitPython not installed. Run: pip install GitPython")
     sys.exit(1)
 
-WIKI_REPO = "https://github.com/deanSLAC/isaac-ai-ready-record.wiki.git"
+WIKI_REPO = "https://github.com/ISAAC-DOE/isaac-ai-ready-record.wiki.git"
 VOCAB_FILE = os.path.join(os.path.dirname(__file__), '..', 'data', 'vocabulary.json')
 
 # Section name → wiki page filename (without .md)
@@ -88,7 +88,7 @@ def main():
     except Exception as e:
         print(f"Failed to clone wiki: {e}")
         print("\nMake sure:")
-        print("  1. The wiki exists (visit https://github.com/deanSLAC/isaac-ai-ready-record/wiki)")
+        print("  1. The wiki exists (visit https://github.com/ISAAC-DOE/isaac-ai-ready-record/wiki)")
         print("  2. Create at least one page via the GitHub UI first")
         print("  3. Your token has Contents read/write permission")
         shutil.rmtree(tmp_dir, ignore_errors=True)

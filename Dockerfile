@@ -1,5 +1,5 @@
 # BUILD & PUSH (from Mac, targeting linux/amd64):
-#   docker buildx build --platform linux/amd64 -t ghcr.io/deanslac/isaac-ai-ready-record:latest --push .
+#   docker buildx build --platform linux/amd64 -t ghcr.io/isaac-doe/isaac-ai-ready-record:latest --push .
 FROM python:3.11-slim
 
 WORKDIR /app

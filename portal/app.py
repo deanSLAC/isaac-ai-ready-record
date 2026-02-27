@@ -122,7 +122,7 @@ def get_display_name(key):
     return DISPLAY_MAP.get(key, key)
 
 # --- CONFIG: Wiki Mapping ---
-WIKI_BASE = "https://github.com/deanSLAC/isaac-ai-ready-record/wiki"
+WIKI_BASE = "https://github.com/ISAAC-DOE/isaac-ai-ready-record/wiki"
 
 WIKI_MAP = {
     "Record Info": "Record-Overview",

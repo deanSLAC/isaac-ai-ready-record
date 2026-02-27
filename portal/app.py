@@ -70,7 +70,7 @@ if db_connected and os.environ.get("WIKI_REPO_URL"):
 if "current_page" not in st.session_state:
     st.session_state.current_page = "Dashboard"
 
-PAGES = ["Dashboard", "Ontology Editor", "Record Form", "Record Validator", "Saved Records", "nano ISAAC", "API Documentation", "About"]
+PAGES = ["Dashboard", "Ontology Editor", "Record Form", "Record Validator", "Saved Records", "nano ISAAC", "API Keys", "API Documentation", "About"]
 if user_is_admin:
     # Insert Admin Review after Ontology Editor
     PAGES.insert(2, "Admin Review")
@@ -895,18 +895,135 @@ elif page == "nano ISAAC":
 # =============================================================================
 # PAGE: API Documentation
 # =============================================================================
+# =============================================================================
+# PAGE: API Keys
+# =============================================================================
+elif page == "API Keys":
+    st.header("API Keys")
+    st.markdown("Generate and manage API keys for programmatic access to the ISAAC Portal API.")
+
+    authentik_api_url = os.environ.get(
+        "AUTHENTIK_INTERNAL_URL",
+        "http://authentik-server.authentik.svc.cluster.local:9000",
+    )
+    authentik_api_token = os.environ.get("AUTHENTIK_API_TOKEN", "")
+
+    if not authentik_api_token:
+        st.error("API key management is not configured. Contact an administrator.")
+    else:
+        admin_headers = {"Authorization": f"Bearer {authentik_api_token}"}
+
+        # Look up current user's PK in Authentik
+        user_pk = None
+        try:
+            user_resp = requests.get(
+                f"{authentik_api_url}/api/v3/core/users/",
+                headers=admin_headers,
+                params={"username": current_username},
+                timeout=5,
+            )
+            user_resp.raise_for_status()
+            user_results = user_resp.json().get("results", [])
+            if user_results:
+                user_pk = user_results[0]["pk"]
+        except Exception as exc:
+            st.error(f"Could not look up user in Authentik: {exc}")
+
+        if user_pk:
+            # --- Generate new key ---
+            st.subheader("Generate New Key")
+            if st.button("Generate API Key"):
+                try:
+                    import ulid as ulid_mod
+                    identifier = f"isaac-api-{current_username}-{ulid_mod.new()}"
+
+                    create_resp = requests.post(
+                        f"{authentik_api_url}/api/v3/core/tokens/",
+                        headers=admin_headers,
+                        json={
+                            "identifier": identifier,
+                            "intent": "api",
+                            "user": user_pk,
+                            "description": f"ISAAC Portal API key for {current_username}",
+                            "expiring": False,
+                        },
+                        timeout=10,
+                    )
+                    create_resp.raise_for_status()
+
+                    key_resp = requests.get(
+                        f"{authentik_api_url}/api/v3/core/tokens/{identifier}/view_key/",
+                        headers=admin_headers,
+                        timeout=5,
+                    )
+                    key_resp.raise_for_status()
+                    key_value = key_resp.json()["key"]
+
+                    st.success("API key created. Copy it now — it will not be shown again.")
+                    st.code(key_value, language="text")
+                    st.markdown("**Usage:**")
+                    st.code(
+                        f'curl -H "Authorization: Bearer {key_value}" \\\n'
+                        f'  https://isaac.slac.stanford.edu/portal/api/records',
+                        language="bash",
+                    )
+                except Exception as exc:
+                    st.error(f"Failed to create API key: {exc}")
+
+            # --- List existing keys ---
+            st.divider()
+            st.subheader("Your API Keys")
+            try:
+                list_resp = requests.get(
+                    f"{authentik_api_url}/api/v3/core/tokens/",
+                    headers=admin_headers,
+                    params={"user__pk": user_pk, "intent": "api"},
+                    timeout=5,
+                )
+                list_resp.raise_for_status()
+
+                keys = [
+                    t for t in list_resp.json().get("results", [])
+                    if t.get("identifier", "").startswith("isaac-api-")
+                ]
+
+                if not keys:
+                    st.info("You have no API keys. Generate one above.")
+                else:
+                    for key_info in keys:
+                        ident = key_info["identifier"]
+                        created = key_info.get("created", "unknown")
+                        col1, col2 = st.columns([4, 1])
+                        with col1:
+                            st.text(f"{ident}  (created: {created})")
+                        with col2:
+                            if st.button("Revoke", key=f"revoke_{ident}"):
+                                try:
+                                    del_resp = requests.delete(
+                                        f"{authentik_api_url}/api/v3/core/tokens/{ident}/",
+                                        headers=admin_headers,
+                                        timeout=5,
+                                    )
+                                    del_resp.raise_for_status()
+                                    st.success(f"Revoked: {ident}")
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(f"Failed to revoke: {exc}")
+            except Exception as exc:
+                st.error(f"Failed to list API keys: {exc}")
+
+
+# =============================================================================
+# PAGE: API Documentation
+# =============================================================================
 elif page == "API Documentation":
     st.header("API Documentation")
     st.info("The ISAAC Portal includes a REST API sidecar for programmatic record submission and validation.")
 
     st.subheader("Authentication")
     st.markdown("""
-    The API requires a valid **Authentik API token** for all endpoints except the health check.
-
-    1. Log in to your [Authentik user settings](https://isaac.slac.stanford.edu/auth/if/user/#/settings)
-    2. Click the **Tokens and App passwords** tab
-    3. Click **Create Token**, give it an identifier (e.g., `my-api-key`), and copy the token key
-    4. Pass the token in the `Authorization` header:
+    All API endpoints require authentication via a **Bearer token**.
+    Generate an API key from the **API Keys** page in this portal, then pass it in the `Authorization` header:
     """)
     st.code('Authorization: Bearer <your-authentik-token>', language="text")
 
@@ -1029,6 +1146,7 @@ elif page == "About":
     - **Record Validator**: Validate Excel files against the schema and save to database
     - **Record Form**: Manually create ISAAC records
     - **Saved Records**: View and manage records in the database
+    - **API Keys**: Generate and manage API keys for programmatic access
     - **API Documentation**: REST API reference for programmatic access
     """)
     st.markdown("**Schema version: ISAAC AI-Ready Record v1.0**")

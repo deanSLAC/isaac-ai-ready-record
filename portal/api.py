@@ -54,8 +54,12 @@ AUTHENTIK_INTERNAL_URL = os.environ.get(
     "AUTHENTIK_INTERNAL_URL",
     "http://authentik-server.authentik.svc.cluster.local:9000",
 )
+# Service account token for admin API operations (key management)
+AUTHENTIK_API_TOKEN = os.environ.get("AUTHENTIK_API_TOKEN", "")
 
-# In-memory token cache: token -> {"user": str, "expires": float}
+ALLOWED_GROUPS = {"admin", "researcher"}
+
+# In-memory token cache: token -> {"user": str, "groups": list, "expires": float}
 _token_cache: dict = {}
 _TOKEN_CACHE_TTL = 300  # 5 minutes
 
@@ -75,12 +79,13 @@ logger.info("Loaded ISAAC schema from %s", SCHEMA_PATH)
 # ---------------------------------------------------------------------------
 # Auth helper
 # ---------------------------------------------------------------------------
-def _validate_bearer_token(token: str) -> str | None:
+def _validate_bearer_token(token: str) -> dict | None:
     """
     Validate a Bearer token against Authentik.
 
-    Calls GET /api/v3/core/users/me/ with the token.  Returns the username
-    on success, or None if the token is invalid / Authentik is unreachable.
+    Calls GET /api/v3/core/users/me/ with the token.  Returns a dict with
+    'user' (username) and 'groups' (list of group names) on success, or
+    None if the token is invalid / Authentik is unreachable.
     Results are cached for 5 minutes to reduce load on Authentik.
     """
     now = time.monotonic()
@@ -88,7 +93,7 @@ def _validate_bearer_token(token: str) -> str | None:
     # Check cache
     cached = _token_cache.get(token)
     if cached and cached["expires"] > now:
-        return cached["user"]
+        return {"user": cached["user"], "groups": cached["groups"]}
 
     # Evict expired entries (cheap linear scan — cache is small)
     expired_keys = [k for k, v in _token_cache.items() if v["expires"] <= now]
@@ -110,13 +115,15 @@ def _validate_bearer_token(token: str) -> str | None:
         return None
 
     try:
-        username = resp.json()["user"]["username"]
+        user_data = resp.json()
+        username = user_data["user"]["username"]
+        groups = [g["name"] for g in user_data["user"].get("groups_obj", [])]
     except (KeyError, TypeError, ValueError):
         logger.warning("Unexpected Authentik /users/me/ response: %s", resp.text[:200])
         return None
 
-    _token_cache[token] = {"user": username, "expires": now + _TOKEN_CACHE_TTL}
-    return username
+    _token_cache[token] = {"user": username, "groups": groups, "expires": now + _TOKEN_CACHE_TTL}
+    return {"user": username, "groups": groups}
 
 
 def _get_auth_info():
@@ -139,9 +146,16 @@ def _get_auth_info():
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
-        username = _validate_bearer_token(token)
-        if username:
-            return {"method": "bearer_token", "user": username}
+        token_info = _validate_bearer_token(token)
+        if token_info:
+            if any(g in ALLOWED_GROUPS for g in token_info["groups"]):
+                return {"method": "bearer_token", "user": token_info["user"]}
+            logger.warning(
+                "Token valid for user %s but groups %s not in %s",
+                token_info["user"], token_info["groups"], ALLOWED_GROUPS,
+            )
+            # Return a special marker so _require_auth can return 403 vs 401
+            return {"method": "bearer_token", "user": token_info["user"], "forbidden": True}
         # Token present but invalid — return None so _require_auth rejects it
         return None
 
@@ -173,9 +187,14 @@ def _require_auth(fn):
                 "error": "authentication_required",
                 "message": (
                     "Provide a valid Bearer token in the Authorization header. "
-                    "Create one at https://isaac.slac.stanford.edu/auth/if/user/#/settings (Tokens and App passwords tab)"
+                    "Generate one from the API Keys page in the ISAAC Portal."
                 ),
             }), 401
+        if auth_info.get("forbidden"):
+            return jsonify({
+                "error": "insufficient_permissions",
+                "message": "Your account is not in an authorized group. Contact an administrator.",
+            }), 403
         request.auth_info = auth_info
         return fn(*args, **kwargs)
     return wrapper
@@ -349,6 +368,161 @@ def get_record(record_id):
         return jsonify({"error": "Record not found"}), 404
 
     return jsonify(record), 200
+
+
+# ===========================================================================
+# API Key Management Endpoints
+# ===========================================================================
+
+def _authentik_admin_headers():
+    """Headers for Authentik admin API calls using the service account token."""
+    return {"Authorization": f"Bearer {AUTHENTIK_API_TOKEN}"}
+
+
+def _get_user_pk(username):
+    """Look up a user's primary key in Authentik by username."""
+    resp = http_requests.get(
+        f"{AUTHENTIK_INTERNAL_URL}/api/v3/core/users/",
+        headers=_authentik_admin_headers(),
+        params={"username": username},
+        timeout=5,
+    )
+    resp.raise_for_status()
+    results = resp.json().get("results", [])
+    if not results:
+        return None
+    return results[0]["pk"]
+
+
+def _require_sso():
+    """Return the SSO username or None.
+
+    Key management requires a browser SSO session (X-authentik-username).
+    Bearer tokens cannot be used to create new tokens.
+    """
+    return request.headers.get("X-authentik-username")
+
+
+@app.route("/portal/api/keys", methods=["POST"])
+@_require_auth
+def create_api_key():
+    """Create a new API key for the logged-in user."""
+    username = _require_sso()
+    if not username:
+        return jsonify({"error": "Must be logged in via portal to create API keys"}), 401
+
+    if not AUTHENTIK_API_TOKEN:
+        return jsonify({"error": "API key management not configured"}), 503
+
+    try:
+        user_pk = _get_user_pk(username)
+        if user_pk is None:
+            return jsonify({"error": "User not found in Authentik"}), 404
+
+        import ulid as ulid_mod
+        identifier = f"isaac-api-{username}-{ulid_mod.new()}"
+
+        resp = http_requests.post(
+            f"{AUTHENTIK_INTERNAL_URL}/api/v3/core/tokens/",
+            headers=_authentik_admin_headers(),
+            json={
+                "identifier": identifier,
+                "intent": "api",
+                "user": user_pk,
+                "description": f"ISAAC Portal API key for {username}",
+                "expiring": False,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+
+        key_resp = http_requests.get(
+            f"{AUTHENTIK_INTERNAL_URL}/api/v3/core/tokens/{identifier}/view_key/",
+            headers=_authentik_admin_headers(),
+            timeout=5,
+        )
+        key_resp.raise_for_status()
+
+        return jsonify({
+            "identifier": identifier,
+            "key": key_resp.json()["key"],
+            "message": "Save this key — it will not be shown again.",
+        }), 201
+
+    except http_requests.RequestException as exc:
+        logger.exception("Authentik API error creating token for %s", username)
+        return jsonify({"error": f"Failed to create API key: {exc}"}), 502
+
+
+@app.route("/portal/api/keys", methods=["GET"])
+@_require_auth
+def list_api_keys():
+    """List API keys belonging to the logged-in user."""
+    username = _require_sso()
+    if not username:
+        return jsonify({"error": "Must be logged in via portal to list API keys"}), 401
+
+    if not AUTHENTIK_API_TOKEN:
+        return jsonify({"error": "API key management not configured"}), 503
+
+    try:
+        user_pk = _get_user_pk(username)
+        if user_pk is None:
+            return jsonify({"error": "User not found in Authentik"}), 404
+
+        resp = http_requests.get(
+            f"{AUTHENTIK_INTERNAL_URL}/api/v3/core/tokens/",
+            headers=_authentik_admin_headers(),
+            params={"user__pk": user_pk, "intent": "api"},
+            timeout=5,
+        )
+        resp.raise_for_status()
+
+        keys = []
+        for token in resp.json().get("results", []):
+            if token.get("identifier", "").startswith("isaac-api-"):
+                keys.append({
+                    "identifier": token["identifier"],
+                    "description": token.get("description", ""),
+                    "created": token.get("created"),
+                })
+
+        return jsonify({"keys": keys}), 200
+
+    except http_requests.RequestException as exc:
+        logger.exception("Authentik API error listing tokens for %s", username)
+        return jsonify({"error": f"Failed to list API keys: {exc}"}), 502
+
+
+@app.route("/portal/api/keys/<identifier>", methods=["DELETE"])
+@_require_auth
+def revoke_api_key(identifier):
+    """Revoke (delete) an API key by its identifier."""
+    username = _require_sso()
+    if not username:
+        return jsonify({"error": "Must be logged in via portal to revoke API keys"}), 401
+
+    if not AUTHENTIK_API_TOKEN:
+        return jsonify({"error": "API key management not configured"}), 503
+
+    if not identifier.startswith(f"isaac-api-{username}-"):
+        return jsonify({"error": "Not authorized to revoke this key"}), 403
+
+    try:
+        resp = http_requests.delete(
+            f"{AUTHENTIK_INTERNAL_URL}/api/v3/core/tokens/{identifier}/",
+            headers=_authentik_admin_headers(),
+            timeout=5,
+        )
+        if resp.status_code == 404:
+            return jsonify({"error": "Key not found"}), 404
+        resp.raise_for_status()
+
+        return jsonify({"success": True, "identifier": identifier}), 200
+
+    except http_requests.RequestException as exc:
+        logger.exception("Authentik API error revoking token %s", identifier)
+        return jsonify({"error": f"Failed to revoke API key: {exc}"}), 502
 
 
 # ===========================================================================

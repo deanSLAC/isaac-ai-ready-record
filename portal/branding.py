@@ -29,15 +29,7 @@ def render_footer():
     st.divider()
     col1, col2, col3 = st.columns([1, 3, 1])
     with col2:
-        st.image(
-            _PARTNERS_PATH,
-            caption="SLAC | Argonne | Berkeley Lab | Brookhaven | Lawrence Livermore | Oak Ridge",
-            use_container_width=True,
-        )
+        st.image(_PARTNERS_PATH, use_container_width=True)
         subcol1, subcol2, subcol3 = st.columns([2, 1, 2])
         with subcol2:
             st.image(_DOE_PATH, width=150)
-        st.caption(
-            "<div style='text-align:center'>DOE BES AI Pathfinder Project</div>",
-            unsafe_allow_html=True,
-        )

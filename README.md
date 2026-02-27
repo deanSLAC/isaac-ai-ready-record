@@ -7,15 +7,15 @@ This repository defines the authoritative standard for the **ISAAC AI-Ready Reco
 It provides the schema, documentation, and examples required to represent scientific data in a format that is semantically rigorous, machine-readable, and optimized for autonomous agent reasoning.
 
 ## Documentation Authority
-The **[Wiki](https://github.com/deanSLAC/isaac-ai-ready-record/wiki)** is the normative single source of truth for the v1.0 standard. All definitions, constraints, and vocabularies are rigorously defined there.
+The **[Wiki](https://github.com/ISAAC-DOE/isaac-ai-ready-record/wiki)** is the normative single source of truth for the v1.0 standard. All definitions, constraints, and vocabularies are rigorously defined there.
 
-*   **[Record Overview](https://github.com/deanSLAC/isaac-ai-ready-record/wiki/Record-Overview)**: The 8-block anatomy of a record.
-*   **[Measurement](https://github.com/deanSLAC/isaac-ai-ready-record/wiki/Measurement)**: The observable schema and data contract.
-*   **[System](https://github.com/deanSLAC/isaac-ai-ready-record/wiki/System)**: Infrastructure and configuration definitions.
-*   **[Sample](https://github.com/deanSLAC/isaac-ai-ready-record/wiki/Sample)**: Material identity and realization.
-*   **[Links](https://github.com/deanSLAC/isaac-ai-ready-record/wiki/Links)**: The knowledge graph ontology.
-*   **[Descriptors](https://github.com/deanSLAC/isaac-ai-ready-record/wiki/Descriptors)**: Scientific claims and features.
-*   **[Assets](https://github.com/deanSLAC/isaac-ai-ready-record/wiki/Assets)**: External immutable objects.
+*   **[Record Overview](https://github.com/ISAAC-DOE/isaac-ai-ready-record/wiki/Record-Overview)**: The 8-block anatomy of a record.
+*   **[Measurement](https://github.com/ISAAC-DOE/isaac-ai-ready-record/wiki/Measurement)**: The observable schema and data contract.
+*   **[System](https://github.com/ISAAC-DOE/isaac-ai-ready-record/wiki/System)**: Infrastructure and configuration definitions.
+*   **[Sample](https://github.com/ISAAC-DOE/isaac-ai-ready-record/wiki/Sample)**: Material identity and realization.
+*   **[Links](https://github.com/ISAAC-DOE/isaac-ai-ready-record/wiki/Links)**: The knowledge graph ontology.
+*   **[Descriptors](https://github.com/ISAAC-DOE/isaac-ai-ready-record/wiki/Descriptors)**: Scientific claims and features.
+*   **[Assets](https://github.com/ISAAC-DOE/isaac-ai-ready-record/wiki/Assets)**: External immutable objects.
 
 ## Repository Structure
 *   `schema/`: Strict JSON Schema definitions (`isaac_record_v1.json`) for validation.

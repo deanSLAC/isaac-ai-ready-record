@@ -101,10 +101,7 @@ with status_col:
 with user_col:
     _logout_url = "https://isaac.slac.stanford.edu/outpost.goauthentik.io/flows/logout/"
     st.markdown(
-        f'<div style="text-align:right;font-size:0.9em;padding-top:0.4em;">'
-        f'👤 {current_username} &nbsp;|&nbsp; <a href="{_logout_url}" target="_self">Logout</a>'
-        f'</div>',
-        unsafe_allow_html=True,
+        f"👤 **{current_username}** &nbsp;|&nbsp; [Logout]({_logout_url})"
     )
 
 page = st.session_state.current_page

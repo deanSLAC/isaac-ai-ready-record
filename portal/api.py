@@ -117,7 +117,9 @@ def _validate_bearer_token(token: str) -> dict | None:
     try:
         user_data = resp.json()
         username = user_data["user"]["username"]
-        groups = [g["name"] for g in user_data["user"].get("groups_obj", [])]
+        # /api/v3/core/users/me/ returns "groups" (list of {name, pk} dicts),
+        # NOT "groups_obj" which only appears on the admin /users/ endpoint.
+        groups = [g["name"] for g in user_data["user"].get("groups", [])]
     except (KeyError, TypeError, ValueError):
         logger.warning("Unexpected Authentik /users/me/ response: %s", resp.text[:200])
         return None

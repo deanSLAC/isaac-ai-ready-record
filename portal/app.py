@@ -1175,6 +1175,17 @@ if records:
     print(f"Record {record_id}: {record['record_type']} / {record['record_domain']}")''', language="python")
 
     st.divider()
+
+    # --- Simplest curl example ---
+    st.subheader("Simplest Curl Example")
+    st.markdown("Fetch all records with a single `curl` command:")
+    st.code(
+        'curl -H "Authorization: Bearer <token>" \\\n'
+        '  https://isaac.slac.stanford.edu/portal/api/records',
+        language="bash",
+    )
+
+    st.divider()
     st.markdown(f"**Schema version: ISAAC AI-Ready Record v1.0**")
 
 

@@ -99,7 +99,7 @@ with status_col:
     else:
         st.warning("DB Offline")
 with user_col:
-    _logout_url = "https://isaac.slac.stanford.edu/outpost.goauthentik.io/flows/logout/"
+    _logout_url = "https://isaac.slac.stanford.edu/outpost.goauthentik.io/flows/logout/?rd=https://isaac.slac.stanford.edu/"
     st.markdown(
         f"👤 **{current_username}** &nbsp;|&nbsp; [Logout]({_logout_url})"
     )

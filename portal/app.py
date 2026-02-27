@@ -1022,10 +1022,17 @@ elif page == "API Documentation":
 
     st.subheader("Authentication")
     st.markdown("""
-    All API endpoints require authentication via a **Bearer token**.
-    Generate an API key from the **API Keys** page in this portal, then pass it in the `Authorization` header:
+    All API endpoints (except health check) require authentication via a **Bearer token**.
+
+    **How to get your token:**
+
+    1. Go to the **API Keys** page in this portal (from the Menu)
+    2. Click **Generate API Key**
+    3. **Copy the key immediately** — it is only shown once
+
+    Then pass it in the `Authorization` header of every API request:
     """)
-    st.code('Authorization: Bearer <your-authentik-token>', language="text")
+    st.code('Authorization: Bearer <your-token-key>', language="text")
 
     st.subheader("Base URL")
     st.code("https://isaac.slac.stanford.edu/portal/api", language="text")

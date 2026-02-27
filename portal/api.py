@@ -173,7 +173,7 @@ def _require_auth(fn):
                 "error": "authentication_required",
                 "message": (
                     "Provide a valid Bearer token in the Authorization header. "
-                    "Create one at https://isaac.slac.stanford.edu/auth/if/user/#/tokens"
+                    "Create one at https://isaac.slac.stanford.edu/auth/if/user/#/settings (Tokens and App passwords tab)"
                 ),
             }), 401
         request.auth_info = auth_info

@@ -903,8 +903,8 @@ elif page == "API Documentation":
     st.markdown("""
     The API requires a valid **Authentik API token** for all endpoints except the health check.
 
-    1. Log in to your [Authentik user settings](https://isaac.slac.stanford.edu/auth/if/user/#/tokens)
-    2. In the left sidebar, click **Tokens and App passwords**
+    1. Log in to your [Authentik user settings](https://isaac.slac.stanford.edu/auth/if/user/#/settings)
+    2. Click the **Tokens and App passwords** tab
     3. Click **Create Token**, give it an identifier (e.g., `my-api-key`), and copy the token key
     4. Pass the token in the `Authorization` header:
     """)
